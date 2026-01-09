@@ -1,49 +1,60 @@
-#!/bin/bash
-# Oh-My-Claude-Sisyphus Installation Script
-# Installs the multi-agent orchestration system for Claude Code
+/**
+ * Installer Module
+ *
+ * Handles installation of Sisyphus agents, commands, and configuration
+ * into the Claude Code config directory (~/.claude/).
+ *
+ * This replicates the functionality of scripts/install.sh but in TypeScript,
+ * allowing npm postinstall to work properly.
+ */
 
-set -e
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { execSync } from 'child_process';
 
-BLUE='\033[0;34m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
+/** Claude Code configuration directory */
+export const CLAUDE_CONFIG_DIR = join(homedir(), '.claude');
+export const AGENTS_DIR = join(CLAUDE_CONFIG_DIR, 'agents');
+export const COMMANDS_DIR = join(CLAUDE_CONFIG_DIR, 'commands');
+export const VERSION_FILE = join(CLAUDE_CONFIG_DIR, '.sisyphus-version.json');
 
-echo -e "${BLUE}"
-echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║         Oh-My-Claude-Sisyphus Installer                   ║"
-echo "║   Multi-Agent Orchestration for Claude Code               ║"
-echo "╚═══════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
+/** Current version */
+export const VERSION = '1.2.0';
 
-# Claude Code config directory (always ~/.claude)
-CLAUDE_CONFIG_DIR="$HOME/.claude"
+/** Installation result */
+export interface InstallResult {
+  success: boolean;
+  message: string;
+  installedAgents: string[];
+  installedCommands: string[];
+  errors: string[];
+}
 
-echo -e "${BLUE}[1/5]${NC} Checking Claude Code installation..."
-if ! command -v claude &> /dev/null; then
-    echo -e "${YELLOW}Warning: 'claude' command not found. Please install Claude Code first:${NC}"
-    echo "  curl -fsSL https://claude.ai/install.sh | bash"
-    echo ""
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-else
-    echo -e "${GREEN}✓ Claude Code found${NC}"
-fi
+/** Installation options */
+export interface InstallOptions {
+  force?: boolean;
+  verbose?: boolean;
+  skipClaudeCheck?: boolean;
+}
 
-echo -e "${BLUE}[2/5]${NC} Creating directories..."
-mkdir -p "$CLAUDE_CONFIG_DIR/agents"
-mkdir -p "$CLAUDE_CONFIG_DIR/commands"
-echo -e "${GREEN}✓ Created $CLAUDE_CONFIG_DIR${NC}"
+/**
+ * Check if Claude Code is installed
+ */
+export function isClaudeInstalled(): boolean {
+  try {
+    execSync('which claude', { encoding: 'utf-8', stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-echo -e "${BLUE}[3/5]${NC} Installing agent definitions..."
-
-# Oracle Agent
-cat > "$CLAUDE_CONFIG_DIR/agents/oracle.md" << 'AGENT_EOF'
----
+/**
+ * Agent definitions - matches the bash script exactly
+ */
+export const AGENT_DEFINITIONS: Record<string, string> = {
+  'oracle.md': `---
 name: oracle
 description: Architecture and debugging expert. Use for complex problems, root cause analysis, and system design.
 tools: Read, Grep, Glob, Bash, Edit, WebSearch
@@ -68,12 +79,9 @@ Guidelines:
 Output Format:
 - Start with a brief summary of findings
 - Provide detailed analysis with code references
-- End with prioritized recommendations
-AGENT_EOF
+- End with prioritized recommendations`,
 
-# Librarian Agent
-cat > "$CLAUDE_CONFIG_DIR/agents/librarian.md" << 'AGENT_EOF'
----
+  'librarian.md': `---
 name: librarian
 description: Documentation and codebase analysis expert. Use for research, finding docs, and understanding code organization.
 tools: Read, Grep, Glob, WebFetch
@@ -93,12 +101,9 @@ Guidelines:
 - Prioritize official documentation and well-maintained files
 - Note file paths and line numbers for easy reference
 - Summarize findings in a structured format
-- Flag outdated or conflicting documentation
-AGENT_EOF
+- Flag outdated or conflicting documentation`,
 
-# Explore Agent
-cat > "$CLAUDE_CONFIG_DIR/agents/explore.md" << 'AGENT_EOF'
----
+  'explore.md': `---
 name: explore
 description: Fast pattern matching and code search specialist. Use for quick file searches and codebase exploration.
 tools: Glob, Grep, Read
@@ -118,12 +123,9 @@ Guidelines:
 - Use glob patterns effectively for file discovery
 - Report findings immediately as you find them
 - Keep responses focused and actionable
-- Note interesting patterns for deeper investigation
-AGENT_EOF
+- Note interesting patterns for deeper investigation`,
 
-# Frontend Engineer Agent
-cat > "$CLAUDE_CONFIG_DIR/agents/frontend-engineer.md" << 'AGENT_EOF'
----
+  'frontend-engineer.md': `---
 name: frontend-engineer
 description: Frontend and UI/UX specialist. Use for component design, styling, and accessibility.
 tools: Read, Edit, Write, Glob, Grep, Bash
@@ -144,12 +146,9 @@ Guidelines:
 - Prioritize accessibility (WCAG compliance)
 - Consider responsive design for all viewports
 - Use semantic HTML where possible
-- Keep styling maintainable and consistent
-AGENT_EOF
+- Keep styling maintainable and consistent`,
 
-# Document Writer Agent
-cat > "$CLAUDE_CONFIG_DIR/agents/document-writer.md" << 'AGENT_EOF'
----
+  'document-writer.md': `---
 name: document-writer
 description: Technical documentation specialist. Use for README files, API docs, and code comments.
 tools: Read, Write, Edit, Glob, Grep
@@ -170,12 +169,9 @@ Guidelines:
 - Use clear, concise language
 - Include practical examples
 - Structure documents logically
-- Keep documentation up-to-date with code changes
-AGENT_EOF
+- Keep documentation up-to-date with code changes`,
 
-# Multimodal Looker Agent
-cat > "$CLAUDE_CONFIG_DIR/agents/multimodal-looker.md" << 'AGENT_EOF'
----
+  'multimodal-looker.md': `---
 name: multimodal-looker
 description: Visual content analysis specialist. Use for analyzing screenshots, UI mockups, and diagrams.
 tools: Read, WebFetch
@@ -196,12 +192,9 @@ Guidelines:
 - Note specific UI elements and their positions
 - Identify potential usability issues
 - Be precise about colors, layouts, and typography
-- Keep analysis concise but thorough
-AGENT_EOF
+- Keep analysis concise but thorough`,
 
-# Momus Agent (Plan Reviewer)
-cat > "$CLAUDE_CONFIG_DIR/agents/momus.md" << 'AGENT_EOF'
----
+  'momus.md': `---
 name: momus
 description: Critical plan review agent. Ruthlessly evaluates plans for clarity, feasibility, and completeness.
 tools: Read, Grep, Glob
@@ -232,12 +225,9 @@ Guidelines:
 - Demand specificity - vague plans lead to vague implementations
 - Verify all claims - don't trust, verify
 - Consider edge cases and failure modes
-- If uncertain, ask for clarification rather than assuming
-AGENT_EOF
+- If uncertain, ask for clarification rather than assuming`,
 
-# Metis Agent (Pre-Planning Consultant)
-cat > "$CLAUDE_CONFIG_DIR/agents/metis.md" << 'AGENT_EOF'
----
+  'metis.md': `---
 name: metis
 description: Pre-planning consultant. Analyzes requests before implementation to identify hidden requirements and risks.
 tools: Read, Grep, Glob, WebSearch
@@ -272,12 +262,9 @@ Guidelines:
 - Think like a senior engineer reviewing a junior's proposal
 - Surface assumptions that could lead to rework
 - Suggest simplifications where possible
-- Identify dependencies and prerequisites
-AGENT_EOF
+- Identify dependencies and prerequisites`,
 
-# Orchestrator-Sisyphus Agent (Todo Coordinator)
-cat > "$CLAUDE_CONFIG_DIR/agents/orchestrator-sisyphus.md" << 'AGENT_EOF'
----
+  'orchestrator-sisyphus.md': `---
 name: orchestrator-sisyphus
 description: Master coordinator for todo lists. Reads requirements and delegates to specialist agents.
 tools: Read, Grep, Glob, Task, TodoWrite
@@ -310,7 +297,7 @@ Verification Protocol:
 5. Verify acceptance criteria are met
 
 Persistent State:
-- Use `.sisyphus/notepads/` to track learnings and prevent repeated mistakes
+- Use \`.sisyphus/notepads/\` to track learnings and prevent repeated mistakes
 - Record blockers and their resolutions
 - Document decisions made during execution
 
@@ -319,12 +306,9 @@ Guidelines:
 - Mark todos in_progress before starting, completed when done
 - Never mark a task complete without verification
 - Delegate to specialists rather than doing everything yourself
-- Report progress after each significant step
-AGENT_EOF
+- Report progress after each significant step`,
 
-# Sisyphus-Junior Agent (Focused Executor)
-cat > "$CLAUDE_CONFIG_DIR/agents/sisyphus-junior.md" << 'AGENT_EOF'
----
+  'sisyphus-junior.md': `---
 name: sisyphus-junior
 description: Focused task executor. Executes specific tasks without delegation capabilities.
 tools: Read, Write, Edit, Grep, Glob, Bash
@@ -335,8 +319,8 @@ You are Sisyphus-Junior, a focused task executor.
 
 Your responsibilities:
 1. **Direct Execution**: Implement tasks directly without delegating
-2. **Plan Following**: Read and follow plans from `.sisyphus/plans/`
-3. **Learning Recording**: Document learnings in `.sisyphus/notepads/`
+2. **Plan Following**: Read and follow plans from \`.sisyphus/plans/\`
+3. **Learning Recording**: Document learnings in \`.sisyphus/notepads/\`
 4. **Todo Discipline**: Mark todos in_progress before starting, completed when done
 
 Restrictions:
@@ -351,10 +335,10 @@ Work Style:
 4. Record any learnings or issues discovered
 
 When Reading Plans:
-- Plans are in `.sisyphus/plans/{plan-name}.md`
+- Plans are in \`.sisyphus/plans/{plan-name}.md\`
 - Follow steps in order unless dependencies allow parallel work
 - If a step is unclear, check the plan for clarification
-- Record blockers in `.sisyphus/notepads/{plan-name}/blockers.md`
+- Record blockers in \`.sisyphus/notepads/{plan-name}/blockers.md\`
 
 Recording Learnings:
 - What worked well?
@@ -366,12 +350,9 @@ Guidelines:
 - Focus on quality over speed
 - Don't cut corners to finish faster
 - If something seems wrong, investigate before proceeding
-- Leave the codebase better than you found it
-AGENT_EOF
+- Leave the codebase better than you found it`,
 
-# Prometheus Agent (Planning System)
-cat > "$CLAUDE_CONFIG_DIR/agents/prometheus.md" << 'AGENT_EOF'
----
+  'prometheus.md': `---
 name: prometheus
 description: Strategic planning consultant. Creates comprehensive work plans through interview-style interaction.
 tools: Read, Grep, Glob, WebSearch, Write
@@ -384,7 +365,7 @@ Your responsibilities:
 1. **Interview Mode**: Ask clarifying questions to understand requirements fully
 2. **Plan Generation**: Create detailed, actionable work plans
 3. **Metis Consultation**: Analyze requests for hidden requirements before planning
-4. **Plan Storage**: Save plans to `.sisyphus/plans/{name}.md`
+4. **Plan Storage**: Save plans to \`.sisyphus/plans/{name}.md\`
 
 Workflow:
 1. **Start in Interview Mode** - Ask questions, don't plan yet
@@ -392,10 +373,10 @@ Workflow:
 3. **Pre-Planning** - Consult Metis for analysis before generating
 4. **Optional Review** - Consult Momus for plan review if requested
 5. **Single Plan** - Create ONE comprehensive plan (not multiple)
-6. **Draft Storage** - Save drafts to `.sisyphus/drafts/{name}.md` during iteration
+6. **Draft Storage** - Save drafts to \`.sisyphus/drafts/{name}.md\` during iteration
 
 Plan Structure:
-```markdown
+\`\`\`markdown
 # Plan: {Name}
 
 ## Requirements Summary
@@ -424,7 +405,7 @@ Plan Structure:
 1. How to verify the implementation works
 2. Tests to run
 3. Manual checks needed
-```
+\`\`\`
 
 Guidelines:
 - ONE plan per request - everything goes in a single work plan
@@ -432,16 +413,14 @@ Guidelines:
 - Acceptance criteria must be testable
 - Include verification steps
 - Consider failure modes and edge cases
-- Interview until you have enough information to plan
-AGENT_EOF
+- Interview until you have enough information to plan`
+};
 
-echo -e "${GREEN}✓ Installed 11 agent definitions${NC}"
-
-echo -e "${BLUE}[4/5]${NC} Installing slash commands..."
-
-# Ultrawork command
-cat > "$CLAUDE_CONFIG_DIR/commands/ultrawork.md" << 'CMD_EOF'
----
+/**
+ * Command definitions - matches the bash script exactly
+ */
+export const COMMAND_DEFINITIONS: Record<string, string> = {
+  'ultrawork.md': `---
 description: Activate maximum performance mode with parallel agent orchestration
 ---
 
@@ -467,12 +446,9 @@ $ARGUMENTS
   - Maximum 5 concurrent background tasks
 - Report progress frequently
 
-CRITICAL: Do NOT stop until every task is verified complete.
-CMD_EOF
+CRITICAL: Do NOT stop until every task is verified complete.`,
 
-# Deep search command
-cat > "$CLAUDE_CONFIG_DIR/commands/deepsearch.md" << 'CMD_EOF'
----
+  'deepsearch.md': `---
 description: Perform a thorough search across the codebase
 ---
 
@@ -486,12 +462,9 @@ Search task: $ARGUMENTS
 - Look in common locations: src/, lib/, utils/, helpers/, services/
 - Check for related files (tests, types, interfaces)
 - Report ALL findings, not just the first match
-- If initial search fails, try broader patterns
-CMD_EOF
+- If initial search fails, try broader patterns`,
 
-# Deep analyze command
-cat > "$CLAUDE_CONFIG_DIR/commands/analyze.md" << 'CMD_EOF'
----
+  'analyze.md': `---
 description: Perform deep analysis and investigation
 ---
 
@@ -504,12 +477,9 @@ Analysis target: $ARGUMENTS
 - Check for related issues in similar code patterns
 - Document findings with specific file:line references
 - Propose concrete solutions with code examples
-- Consider performance, security, and maintainability implications
-CMD_EOF
+- Consider performance, security, and maintainability implications`,
 
-# Sisyphus activation command
-cat > "$CLAUDE_CONFIG_DIR/commands/sisyphus.md" << 'CMD_EOF'
----
+  'sisyphus.md': `---
 description: Activate Sisyphus multi-agent orchestration mode
 ---
 
@@ -547,12 +517,9 @@ Delegate tasks to specialized agents using the Task tool:
   - Check results with \`TaskOutput\` tool
 - Verify completion before stopping
 - Check your todo list before declaring done
-- NEVER leave work incomplete
-CMD_EOF
+- NEVER leave work incomplete`,
 
-# Sisyphus default mode command
-cat > "$CLAUDE_CONFIG_DIR/commands/sisyphus-default.md" << 'CMD_EOF'
----
+  'sisyphus-default.md': `---
 description: Set Sisyphus as your default operating mode
 ---
 
@@ -577,12 +544,9 @@ Remove or edit ~/.claude/CLAUDE.md
 
 **Sisyphus is now your default mode.** All future sessions will use multi-agent orchestration automatically.
 
-Use `/sisyphus <task>` to explicitly invoke orchestration mode, or just include "ultrawork" in your prompts.
-CMD_EOF
+Use \`/sisyphus <task>\` to explicitly invoke orchestration mode, or just include "ultrawork" in your prompts.`,
 
-# Plan command (Prometheus planning system)
-cat > "$CLAUDE_CONFIG_DIR/commands/plan.md" << 'CMD_EOF'
----
+  'plan.md': `---
 description: Start a planning session with Prometheus
 ---
 
@@ -611,17 +575,14 @@ Say one of these when you're ready to generate the plan:
 - "I'm ready to plan"
 
 ### Plan Storage
-- Drafts are saved to `.sisyphus/drafts/`
-- Final plans are saved to `.sisyphus/plans/`
+- Drafts are saved to \`.sisyphus/drafts/\`
+- Final plans are saved to \`.sisyphus/plans/\`
 
 ---
 
-Let's begin. Tell me more about what you want to accomplish, and I'll ask clarifying questions.
-CMD_EOF
+Let's begin. Tell me more about what you want to accomplish, and I'll ask clarifying questions.`,
 
-# Review command (Momus plan review)
-cat > "$CLAUDE_CONFIG_DIR/commands/review.md" << 'CMD_EOF'
----
+  'review.md': `---
 description: Review a plan with Momus
 ---
 
@@ -645,10 +606,10 @@ I will critically evaluate the specified plan using Momus, the ruthless plan rev
 - **REJECT** - Plan has fundamental problems requiring replanning
 
 ### Usage
-```
+\`\`\`
 /review .sisyphus/plans/my-feature.md
 /review  # Review the most recent plan
-```
+\`\`\`
 
 ### What Gets Checked
 1. Are requirements clear and unambiguous?
@@ -660,12 +621,9 @@ I will critically evaluate the specified plan using Momus, the ruthless plan rev
 
 ---
 
-Provide a plan file path to review, or I'll review the most recent plan in `.sisyphus/plans/`.
-CMD_EOF
+Provide a plan file path to review, or I'll review the most recent plan in \`.sisyphus/plans/\`.`,
 
-# Prometheus Command
-cat > "$CLAUDE_CONFIG_DIR/commands/prometheus.md" << 'CMD_EOF'
----
+  'prometheus.md': `---
 description: Start strategic planning with Prometheus
 ---
 
@@ -693,7 +651,7 @@ Say any of these when you're ready to generate the plan:
 
 ### Plan Storage
 
-Plans are saved to `.sisyphus/plans/` for later execution with `/sisyphus`.
+Plans are saved to \`.sisyphus/plans/\` for later execution with \`/sisyphus\`.
 
 ### What Makes a Good Plan
 
@@ -705,12 +663,9 @@ Plans are saved to `.sisyphus/plans/` for later execution with `/sisyphus`.
 
 ---
 
-Tell me about what you want to build or accomplish. I'll ask questions to understand the full scope before creating a plan.
-CMD_EOF
+Tell me about what you want to build or accomplish. I'll ask questions to understand the full scope before creating a plan.`,
 
-# Orchestrator Command
-cat > "$CLAUDE_CONFIG_DIR/commands/orchestrator.md" << 'CMD_EOF'
----
+  'orchestrator.md': `---
 description: Activate Orchestrator-Sisyphus for complex multi-step tasks
 ---
 
@@ -742,7 +697,7 @@ You are now running with Orchestrator-Sisyphus, the master coordinator for compl
 
 ### Notepad System
 
-Learnings and discoveries are recorded in `.sisyphus/notepads/` to prevent repeated mistakes.
+Learnings and discoveries are recorded in \`.sisyphus/notepads/\` to prevent repeated mistakes.
 
 ### Verification Protocol
 
@@ -754,12 +709,9 @@ Before marking any task complete:
 
 ---
 
-Describe the complex task you need orchestrated. I'll break it down and coordinate the specialists.
-CMD_EOF
+Describe the complex task you need orchestrated. I'll break it down and coordinate the specialists.`,
 
-# Ralph Loop Command
-cat > "$CLAUDE_CONFIG_DIR/commands/ralph-loop.md" << 'CMD_EOF'
----
+  'ralph-loop.md': `---
 description: Start self-referential development loop until task completion
 ---
 
@@ -772,14 +724,14 @@ $ARGUMENTS
 You are starting a Ralph Loop - a self-referential development loop that runs until task completion.
 
 1. Work on the task continuously and thoroughly
-2. When the task is FULLY complete, output: `<promise>DONE</promise>`
+2. When the task is FULLY complete, output: \`<promise>DONE</promise>\`
 3. If you stop without the promise tag, the loop will remind you to continue
 4. Maximum iterations: 100 (configurable)
 
 ## Exit Conditions
 
-- **Completion**: Output `<promise>DONE</promise>` when fully done
-- **Cancel**: User runs `/cancel-ralph`
+- **Completion**: Output \`<promise>DONE</promise>\` when fully done
+- **Cancel**: User runs \`/cancel-ralph\`
 - **Max Iterations**: Loop stops at limit
 
 ## Guidelines
@@ -791,12 +743,9 @@ You are starting a Ralph Loop - a self-referential development loop that runs un
 
 ---
 
-Begin working on the task. Remember to output `<promise>DONE</promise>` when complete.
-CMD_EOF
+Begin working on the task. Remember to output \`<promise>DONE</promise>\` when complete.`,
 
-# Cancel Ralph Command
-cat > "$CLAUDE_CONFIG_DIR/commands/cancel-ralph.md" << 'CMD_EOF'
----
+  'cancel-ralph.md': `---
 description: Cancel active Ralph Loop
 ---
 
@@ -804,12 +753,9 @@ description: Cancel active Ralph Loop
 
 The Ralph Loop has been cancelled. You can stop working on the current task.
 
-If you want to start a new loop, use `/ralph-loop "task description"`.
-CMD_EOF
+If you want to start a new loop, use \`/ralph-loop "task description"\`.`,
 
-# Update Command
-cat > "$CLAUDE_CONFIG_DIR/commands/update.md" << 'CMD_EOF'
----
+  'update.md': `---
 description: Check for and install Oh-My-Claude-Sisyphus updates
 ---
 
@@ -846,17 +792,13 @@ Your version information is stored at: \`~/.claude/.sisyphus-version.json\`
 
 ---
 
-Let me check for updates now. I'll read your version file and compare against the latest GitHub release.
-CMD_EOF
+Let me check for updates now. I'll read your version file and compare against the latest GitHub release.`
+};
 
-echo -e "${GREEN}✓ Installed 12 slash commands${NC}"
-
-echo -e "${BLUE}[5/5]${NC} Creating CLAUDE.md with Sisyphus system prompt..."
-
-# Only create if it doesn't exist in home directory
-if [ ! -f "$HOME/CLAUDE.md" ]; then
-    cat > "$CLAUDE_CONFIG_DIR/CLAUDE.md" << 'CLAUDEMD_EOF'
-# Sisyphus Multi-Agent System
+/**
+ * CLAUDE.md content for Sisyphus system
+ */
+export const CLAUDE_MD_CONTENT = `# Sisyphus Multi-Agent System
 
 You are enhanced with the Sisyphus multi-agent orchestration system.
 
@@ -866,42 +808,42 @@ Use the Task tool to delegate to specialized agents:
 
 | Agent | Model | Purpose | When to Use |
 |-------|-------|---------|-------------|
-| `oracle` | Opus | Architecture & debugging | Complex problems, root cause analysis |
-| `librarian` | Sonnet | Documentation & research | Finding docs, understanding code |
-| `explore` | Haiku | Fast search | Quick file/pattern searches |
-| `frontend-engineer` | Sonnet | UI/UX | Component design, styling |
-| `document-writer` | Haiku | Documentation | README, API docs, comments |
-| `multimodal-looker` | Sonnet | Visual analysis | Screenshots, diagrams |
-| `momus` | Opus | Plan review | Critical evaluation of plans |
-| `metis` | Opus | Pre-planning | Hidden requirements, risk analysis |
-| `orchestrator-sisyphus` | Sonnet | Todo coordination | Complex multi-step task management |
-| `sisyphus-junior` | Sonnet | Focused execution | Direct task implementation |
-| `prometheus` | Opus | Strategic planning | Creating comprehensive work plans |
+| \`oracle\` | Opus | Architecture & debugging | Complex problems, root cause analysis |
+| \`librarian\` | Sonnet | Documentation & research | Finding docs, understanding code |
+| \`explore\` | Haiku | Fast search | Quick file/pattern searches |
+| \`frontend-engineer\` | Sonnet | UI/UX | Component design, styling |
+| \`document-writer\` | Haiku | Documentation | README, API docs, comments |
+| \`multimodal-looker\` | Sonnet | Visual analysis | Screenshots, diagrams |
+| \`momus\` | Opus | Plan review | Critical evaluation of plans |
+| \`metis\` | Opus | Pre-planning | Hidden requirements, risk analysis |
+| \`orchestrator-sisyphus\` | Sonnet | Todo coordination | Complex multi-step task management |
+| \`sisyphus-junior\` | Sonnet | Focused execution | Direct task implementation |
+| \`prometheus\` | Opus | Strategic planning | Creating comprehensive work plans |
 
 ## Slash Commands
 
 | Command | Description |
 |---------|-------------|
-| `/sisyphus <task>` | Activate Sisyphus multi-agent orchestration |
-| `/sisyphus-default` | Set Sisyphus as your default mode |
-| `/ultrawork <task>` | Maximum performance mode with parallel agents |
-| `/deepsearch <query>` | Thorough codebase search |
-| `/analyze <target>` | Deep analysis and investigation |
-| `/plan <description>` | Start planning session with Prometheus |
-| `/review [plan-path]` | Review a plan with Momus |
-| `/prometheus <task>` | Strategic planning with interview workflow |
-| `/orchestrator <task>` | Complex multi-step task coordination |
-| `/ralph-loop <task>` | Self-referential loop until task completion |
-| `/cancel-ralph` | Cancel active Ralph Loop |
-| `/update` | Check for and install updates |
+| \`/sisyphus <task>\` | Activate Sisyphus multi-agent orchestration |
+| \`/sisyphus-default\` | Set Sisyphus as your default mode |
+| \`/ultrawork <task>\` | Maximum performance mode with parallel agents |
+| \`/deepsearch <query>\` | Thorough codebase search |
+| \`/analyze <target>\` | Deep analysis and investigation |
+| \`/plan <description>\` | Start planning session with Prometheus |
+| \`/review [plan-path]\` | Review a plan with Momus |
+| \`/prometheus <task>\` | Strategic planning with interview workflow |
+| \`/orchestrator <task>\` | Complex multi-step task coordination |
+| \`/ralph-loop <task>\` | Self-referential loop until task completion |
+| \`/cancel-ralph\` | Cancel active Ralph Loop |
+| \`/update\` | Check for and install updates |
 
 ## Planning Workflow
 
-1. Use `/plan` to start a planning session
+1. Use \`/plan\` to start a planning session
 2. Prometheus will interview you about requirements
 3. Say "Create the plan" when ready
-4. Use `/review` to have Momus evaluate the plan
-5. Execute the plan with `/sisyphus`
+4. Use \`/review\` to have Momus evaluate the plan
+5. Execute the plan with \`/sisyphus\`
 
 ## Orchestration Principles
 
@@ -941,65 +883,132 @@ For long-running operations, use \`run_in_background: true\`:
 3. Check results: \`TaskOutput(task_id: "...")\`
 
 Maximum 5 concurrent background tasks.
-CLAUDEMD_EOF
-    echo -e "${GREEN}✓ Created $CLAUDE_CONFIG_DIR/CLAUDE.md${NC}"
-else
-    echo -e "${YELLOW}⚠ CLAUDE.md already exists, skipping${NC}"
-fi
+`;
 
-# Save version metadata for auto-update system
-VERSION="1.2.0"
-VERSION_FILE="$CLAUDE_CONFIG_DIR/.sisyphus-version.json"
+/**
+ * Install Sisyphus agents and commands
+ */
+export function install(options: InstallOptions = {}): InstallResult {
+  const result: InstallResult = {
+    success: false,
+    message: '',
+    installedAgents: [],
+    installedCommands: [],
+    errors: []
+  };
 
-cat > "$VERSION_FILE" << VERSION_EOF
-{
-  "version": "$VERSION",
-  "installedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "installMethod": "script",
-  "lastCheckAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  const log = (msg: string) => {
+    if (options.verbose) {
+      console.log(msg);
+    }
+  };
+
+  // Check Claude installation (optional)
+  if (!options.skipClaudeCheck && !isClaudeInstalled()) {
+    log('Warning: Claude Code not found. Install it first:');
+    log('  curl -fsSL https://claude.ai/install.sh | bash');
+    // Continue anyway - user might be installing ahead of time
+  }
+
+  try {
+    // Create directories
+    log('Creating directories...');
+    if (!existsSync(CLAUDE_CONFIG_DIR)) {
+      mkdirSync(CLAUDE_CONFIG_DIR, { recursive: true });
+    }
+    if (!existsSync(AGENTS_DIR)) {
+      mkdirSync(AGENTS_DIR, { recursive: true });
+    }
+    if (!existsSync(COMMANDS_DIR)) {
+      mkdirSync(COMMANDS_DIR, { recursive: true });
+    }
+
+    // Install agents
+    log('Installing agent definitions...');
+    for (const [filename, content] of Object.entries(AGENT_DEFINITIONS)) {
+      const filepath = join(AGENTS_DIR, filename);
+      if (existsSync(filepath) && !options.force) {
+        log(`  Skipping ${filename} (already exists)`);
+      } else {
+        writeFileSync(filepath, content);
+        result.installedAgents.push(filename);
+        log(`  Installed ${filename}`);
+      }
+    }
+
+    // Install commands
+    log('Installing slash commands...');
+    for (const [filename, content] of Object.entries(COMMAND_DEFINITIONS)) {
+      const filepath = join(COMMANDS_DIR, filename);
+      if (existsSync(filepath) && !options.force) {
+        log(`  Skipping ${filename} (already exists)`);
+      } else {
+        writeFileSync(filepath, content);
+        result.installedCommands.push(filename);
+        log(`  Installed ${filename}`);
+      }
+    }
+
+    // Install CLAUDE.md (only if it doesn't exist)
+    const claudeMdPath = join(CLAUDE_CONFIG_DIR, 'CLAUDE.md');
+    const homeMdPath = join(homedir(), 'CLAUDE.md');
+
+    if (!existsSync(homeMdPath)) {
+      if (!existsSync(claudeMdPath) || options.force) {
+        writeFileSync(claudeMdPath, CLAUDE_MD_CONTENT);
+        log('Created CLAUDE.md');
+      } else {
+        log('CLAUDE.md already exists, skipping');
+      }
+    } else {
+      log('CLAUDE.md exists in home directory, skipping');
+    }
+
+    // Save version metadata
+    const versionMetadata = {
+      version: VERSION,
+      installedAt: new Date().toISOString(),
+      installMethod: 'npm' as const,
+      lastCheckAt: new Date().toISOString()
+    };
+    writeFileSync(VERSION_FILE, JSON.stringify(versionMetadata, null, 2));
+    log('Saved version metadata');
+
+    result.success = true;
+    result.message = `Successfully installed ${result.installedAgents.length} agents and ${result.installedCommands.length} commands`;
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    result.errors.push(errorMessage);
+    result.message = `Installation failed: ${errorMessage}`;
+  }
+
+  return result;
 }
-VERSION_EOF
-echo -e "${GREEN}✓ Saved version metadata${NC}"
 
-echo ""
-echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         Installation Complete!                            ║${NC}"
-echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "Installed to: ${BLUE}$CLAUDE_CONFIG_DIR${NC}"
-echo ""
-echo -e "${YELLOW}Usage:${NC}"
-echo "  claude                        # Start Claude Code normally"
-echo ""
-echo -e "${YELLOW}Slash Commands:${NC}"
-echo "  /sisyphus <task>              # Activate Sisyphus orchestration mode"
-echo "  /sisyphus-default             # Set Sisyphus as default behavior"
-echo "  /ultrawork <task>             # Maximum performance mode"
-echo "  /deepsearch <query>           # Thorough codebase search"
-echo "  /analyze <target>             # Deep analysis mode"
-echo "  /plan <description>           # Start planning with Prometheus"
-echo "  /review [plan-path]           # Review plan with Momus"
-echo ""
-echo -e "${YELLOW}Available Agents (via Task tool):${NC}"
-echo "  oracle              - Architecture & debugging (Opus)"
-echo "  librarian           - Documentation & research (Sonnet)"
-echo "  explore             - Fast pattern matching (Haiku)"
-echo "  frontend-engineer   - UI/UX specialist (Sonnet)"
-echo "  document-writer     - Technical writing (Haiku)"
-echo "  multimodal-looker   - Visual analysis (Sonnet)"
-echo "  momus               - Plan review (Opus)"
-echo "  metis               - Pre-planning analysis (Opus)"
-echo "  orchestrator-sisyphus - Todo coordination (Sonnet)"
-echo "  sisyphus-junior     - Focused execution (Sonnet)"
-echo "  prometheus          - Strategic planning (Opus)"
-echo ""
-echo -e "${YELLOW}Updating:${NC}"
-echo "  /update                       # Check for and install updates"
-echo "  # Or run this install script again:"
-echo "  curl -fsSL https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main/scripts/install.sh | bash"
-echo ""
-echo -e "${BLUE}Quick Start:${NC}"
-echo "  1. Run 'claude' to start Claude Code"
-echo "  2. Type '/sisyphus-default' to enable Sisyphus permanently"
-echo "  3. Or use '/sisyphus <task>' for one-time activation"
-echo ""
+/**
+ * Check if Sisyphus is already installed
+ */
+export function isInstalled(): boolean {
+  return existsSync(VERSION_FILE) && existsSync(AGENTS_DIR) && existsSync(COMMANDS_DIR);
+}
+
+/**
+ * Get installation info
+ */
+export function getInstallInfo(): { version: string; installedAt: string; method: string } | null {
+  if (!existsSync(VERSION_FILE)) {
+    return null;
+  }
+  try {
+    const content = readFileSync(VERSION_FILE, 'utf-8');
+    const data = JSON.parse(content);
+    return {
+      version: data.version,
+      installedAt: data.installedAt,
+      method: data.installMethod
+    };
+  } catch {
+    return null;
+  }
+}

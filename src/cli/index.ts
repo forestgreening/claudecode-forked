@@ -19,10 +19,20 @@ import { fileURLToPath } from 'url';
 import {
   loadConfig,
   getConfigPaths,
-  DEFAULT_CONFIG,
   generateConfigSchema
 } from '../config/loader.js';
 import { createSisyphusSession } from '../index.js';
+import {
+  checkForUpdates,
+  performUpdate,
+  formatUpdateNotification,
+  getInstalledVersion
+} from '../features/auto-update.js';
+import {
+  install as installSisyphus,
+  isInstalled,
+  getInstallInfo
+} from '../installer/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -316,6 +326,225 @@ program
 
     console.log(chalk.blue('\nEnhanced prompt:'));
     console.log(chalk.green(session.processPrompt(prompt)));
+  });
+
+/**
+ * Update command - Check for and install updates
+ */
+program
+  .command('update')
+  .description('Check for and install updates')
+  .option('-c, --check', 'Only check for updates, do not install')
+  .option('-f, --force', 'Force reinstall even if up to date')
+  .option('-q, --quiet', 'Suppress output except for errors')
+  .action(async (options) => {
+    if (!options.quiet) {
+      console.log(chalk.blue('Oh-My-Claude-Sisyphus Update\n'));
+    }
+
+    try {
+      // Show current version
+      const installed = getInstalledVersion();
+      if (!options.quiet) {
+        console.log(chalk.gray(`Current version: ${installed?.version ?? 'unknown'}`));
+        console.log(chalk.gray(`Install method: ${installed?.installMethod ?? 'unknown'}`));
+        console.log('');
+      }
+
+      // Check for updates
+      if (!options.quiet) {
+        console.log('Checking for updates...');
+      }
+
+      const checkResult = await checkForUpdates();
+
+      if (!checkResult.updateAvailable && !options.force) {
+        if (!options.quiet) {
+          console.log(chalk.green(`\n✓ You are running the latest version (${checkResult.currentVersion})`));
+        }
+        return;
+      }
+
+      if (!options.quiet) {
+        console.log(formatUpdateNotification(checkResult));
+      }
+
+      // If check-only mode, stop here
+      if (options.check) {
+        if (checkResult.updateAvailable) {
+          console.log(chalk.yellow('\nRun without --check to install the update.'));
+        }
+        return;
+      }
+
+      // Perform the update
+      if (!options.quiet) {
+        console.log(chalk.blue('\nStarting update...\n'));
+      }
+
+      const result = await performUpdate({ verbose: !options.quiet });
+
+      if (result.success) {
+        if (!options.quiet) {
+          console.log(chalk.green(`\n✓ ${result.message}`));
+          console.log(chalk.gray('\nPlease restart your Claude Code session to use the new version.'));
+        }
+      } else {
+        console.error(chalk.red(`\n✗ ${result.message}`));
+        if (result.errors) {
+          result.errors.forEach(err => console.error(chalk.red(`  - ${err}`)));
+        }
+        process.exit(1);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red(`Update failed: ${message}`));
+      process.exit(1);
+    }
+  });
+
+/**
+ * Version command - Show version information
+ */
+program
+  .command('version')
+  .description('Show detailed version information')
+  .action(async () => {
+    const installed = getInstalledVersion();
+
+    console.log(chalk.blue.bold('\nOh-My-Claude-Sisyphus Version Information\n'));
+    console.log(chalk.gray('━'.repeat(50)));
+
+    console.log(`\n  Package version:   ${chalk.green(version)}`);
+
+    if (installed) {
+      console.log(`  Installed version: ${chalk.green(installed.version)}`);
+      console.log(`  Install method:    ${chalk.cyan(installed.installMethod)}`);
+      console.log(`  Installed at:      ${chalk.gray(installed.installedAt)}`);
+      if (installed.lastCheckAt) {
+        console.log(`  Last update check: ${chalk.gray(installed.lastCheckAt)}`);
+      }
+      if (installed.commitHash) {
+        console.log(`  Commit hash:       ${chalk.gray(installed.commitHash)}`);
+      }
+    } else {
+      console.log(chalk.yellow('  No installation metadata found'));
+      console.log(chalk.gray('  (Run the install script to create version metadata)'));
+    }
+
+    console.log(chalk.gray('\n━'.repeat(50)));
+    console.log(chalk.gray('\nTo check for updates, run: oh-my-claude-sisyphus update --check'));
+  });
+
+/**
+ * Install command - Install agents and commands to ~/.claude/
+ */
+program
+  .command('install')
+  .description('Install Sisyphus agents and commands to Claude Code config (~/.claude/)')
+  .option('-f, --force', 'Overwrite existing files')
+  .option('-q, --quiet', 'Suppress output except for errors')
+  .option('--skip-claude-check', 'Skip checking if Claude Code is installed')
+  .action(async (options) => {
+    if (!options.quiet) {
+      console.log(chalk.blue('╔═══════════════════════════════════════════════════════════╗'));
+      console.log(chalk.blue('║         Oh-My-Claude-Sisyphus Installer                   ║'));
+      console.log(chalk.blue('║   Multi-Agent Orchestration for Claude Code               ║'));
+      console.log(chalk.blue('╚═══════════════════════════════════════════════════════════╝'));
+      console.log('');
+    }
+
+    // Check if already installed
+    if (isInstalled() && !options.force) {
+      const info = getInstallInfo();
+      if (!options.quiet) {
+        console.log(chalk.yellow('Sisyphus is already installed.'));
+        if (info) {
+          console.log(chalk.gray(`  Version: ${info.version}`));
+          console.log(chalk.gray(`  Installed: ${info.installedAt}`));
+        }
+        console.log(chalk.gray('\nUse --force to reinstall.'));
+      }
+      return;
+    }
+
+    // Run installation
+    const result = installSisyphus({
+      force: options.force,
+      verbose: !options.quiet,
+      skipClaudeCheck: options.skipClaudeCheck
+    });
+
+    if (result.success) {
+      if (!options.quiet) {
+        console.log('');
+        console.log(chalk.green('╔═══════════════════════════════════════════════════════════╗'));
+        console.log(chalk.green('║         Installation Complete!                            ║'));
+        console.log(chalk.green('╚═══════════════════════════════════════════════════════════╝'));
+        console.log('');
+        console.log(chalk.gray(`Installed to: ~/.claude/`));
+        console.log('');
+        console.log(chalk.yellow('Usage:'));
+        console.log('  claude                        # Start Claude Code normally');
+        console.log('');
+        console.log(chalk.yellow('Slash Commands:'));
+        console.log('  /sisyphus <task>              # Activate Sisyphus orchestration mode');
+        console.log('  /sisyphus-default             # Set Sisyphus as default behavior');
+        console.log('  /ultrawork <task>             # Maximum performance mode');
+        console.log('  /deepsearch <query>           # Thorough codebase search');
+        console.log('  /analyze <target>             # Deep analysis mode');
+        console.log('  /plan <description>           # Start planning with Prometheus');
+        console.log('  /review [plan-path]           # Review plan with Momus');
+        console.log('');
+        console.log(chalk.yellow('Available Agents (via Task tool):'));
+        console.log('  oracle              - Architecture & debugging (Opus)');
+        console.log('  librarian           - Documentation & research (Sonnet)');
+        console.log('  explore             - Fast pattern matching (Haiku)');
+        console.log('  frontend-engineer   - UI/UX specialist (Sonnet)');
+        console.log('  document-writer     - Technical writing (Haiku)');
+        console.log('  multimodal-looker   - Visual analysis (Sonnet)');
+        console.log('  momus               - Plan review (Opus)');
+        console.log('  metis               - Pre-planning analysis (Opus)');
+        console.log('  orchestrator-sisyphus - Todo coordination (Sonnet)');
+        console.log('  sisyphus-junior     - Focused execution (Sonnet)');
+        console.log('  prometheus          - Strategic planning (Opus)');
+        console.log('');
+        console.log(chalk.blue('Quick Start:'));
+        console.log('  1. Run \'claude\' to start Claude Code');
+        console.log('  2. Type \'/sisyphus-default\' to enable Sisyphus permanently');
+        console.log('  3. Or use \'/sisyphus <task>\' for one-time activation');
+      }
+    } else {
+      console.error(chalk.red(`Installation failed: ${result.message}`));
+      if (result.errors.length > 0) {
+        result.errors.forEach(err => console.error(chalk.red(`  - ${err}`)));
+      }
+      process.exit(1);
+    }
+  });
+
+/**
+ * Postinstall command - Silent install for npm postinstall hook
+ */
+program
+  .command('postinstall', { hidden: true })
+  .description('Run post-install setup (called automatically by npm)')
+  .action(async () => {
+    // Silent install - only show errors
+    const result = installSisyphus({
+      force: false,
+      verbose: false,
+      skipClaudeCheck: true
+    });
+
+    if (result.success) {
+      console.log(chalk.green('✓ Oh-My-Claude-Sisyphus installed successfully!'));
+      console.log(chalk.gray('  Run "oh-my-claude-sisyphus info" to see available agents.'));
+    } else {
+      // Don't fail the npm install, just warn
+      console.warn(chalk.yellow('⚠ Could not complete Sisyphus setup:'), result.message);
+      console.warn(chalk.gray('  Run "oh-my-claude-sisyphus install" manually to complete setup.'));
+    }
   });
 
 // Parse arguments
