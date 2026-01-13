@@ -1,6 +1,6 @@
 {
   "name": "oh-my-claude-sisyphus",
-  "version": "1.10.3",
+  "version": "1.11.2",
   "description": "Multi-agent orchestration system for Claude Code - delegate tasks to specialized agents, manage todos persistently, and work until completion",
   "author": {
     "name": "Yeachan Heo",
