@@ -26,6 +26,8 @@ export { analystAgent } from './analyst.js';
 export { executorAgent } from './executor.js';
 export { plannerAgent } from './planner.js';
 export { qaTesterAgent } from './qa-tester.js';
+export { flutterEngineerAgent } from './flutter-engineer.js';
+export { founderAgent } from './founder.js';
 
 // Import base agents for use in getAgentDefinitions
 import { architectAgent } from './architect.js';
@@ -39,6 +41,8 @@ import { analystAgent } from './analyst.js';
 import { executorAgent } from './executor.js';
 import { plannerAgent } from './planner.js';
 import { qaTesterAgent } from './qa-tester.js';
+import { flutterEngineerAgent } from './flutter-engineer.js';
+import { founderAgent } from './founder.js';
 
 // ============================================================
 // DYNAMIC PROMPT LOADING
@@ -338,6 +342,8 @@ export function getAgentDefinitions(overrides?: Partial<Record<string, Partial<A
     executor: executorAgent,
     planner: plannerAgent,
     'qa-tester': qaTesterAgent,
+    'flutter-engineer': flutterEngineerAgent,
+    founder: founderAgent,
     // Tiered variants (prompts loaded from /agents/*.md)
     'architect-medium': architectMediumAgent,
     'architect-low': architectLowAgent,

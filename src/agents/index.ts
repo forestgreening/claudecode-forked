@@ -34,6 +34,8 @@ export { analystAgent, ANALYST_PROMPT_METADATA } from './analyst.js';
 export { coordinatorAgent, ORCHESTRATOR_SISYPHUS_PROMPT_METADATA } from './coordinator.js';
 export { plannerAgent, PLANNER_PROMPT_METADATA } from './planner.js';
 export { qaTesterAgent, QA_TESTER_PROMPT_METADATA } from './qa-tester.js';
+export { flutterEngineerAgent, FLUTTER_ENGINEER_PROMPT_METADATA } from './flutter-engineer.js';
+export { founderAgent, FOUNDER_PROMPT_METADATA } from './founder.js';
 
 // Tiered agent variants (prompts loaded dynamically from /agents/*.md)
 export {
