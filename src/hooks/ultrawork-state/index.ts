@@ -23,9 +23,11 @@ export interface UltraworkState {
   reinforcement_count: number;
   /** Last time the mode was checked/reinforced */
   last_checked_at: string;
+  /** Whether this ultrawork session is linked to a ralph-loop session */
+  linked_to_ralph?: boolean;
 }
 
-const DEFAULT_STATE: UltraworkState = {
+const _DEFAULT_STATE: UltraworkState = {
   active: false,
   started_at: '',
   original_prompt: '',
@@ -38,8 +40,8 @@ const DEFAULT_STATE: UltraworkState = {
  */
 function getStateFilePath(directory?: string): string {
   const baseDir = directory || process.cwd();
-  const sisyphusDir = join(baseDir, '.sisyphus');
-  return join(sisyphusDir, 'ultrawork-state.json');
+  const omcDir = join(baseDir, '.omc');
+  return join(omcDir, 'ultrawork-state.json');
 }
 
 /**
@@ -50,13 +52,13 @@ function getGlobalStateFilePath(): string {
 }
 
 /**
- * Ensure the .sisyphus directory exists
+ * Ensure the .omc directory exists
  */
 function ensureStateDir(directory?: string): void {
   const baseDir = directory || process.cwd();
-  const sisyphusDir = join(baseDir, '.sisyphus');
-  if (!existsSync(sisyphusDir)) {
-    mkdirSync(sisyphusDir, { recursive: true });
+  const omcDir = join(baseDir, '.omc');
+  if (!existsSync(omcDir)) {
+    mkdirSync(omcDir, { recursive: true });
   }
 }
 
@@ -104,7 +106,7 @@ export function readUltraworkState(directory?: string): UltraworkState | null {
  */
 export function writeUltraworkState(state: UltraworkState, directory?: string): boolean {
   try {
-    // Write to local .sisyphus
+    // Write to local .omc
     ensureStateDir(directory);
     const localStateFile = getStateFilePath(directory);
     writeFileSync(localStateFile, JSON.stringify(state, null, 2));
@@ -126,7 +128,8 @@ export function writeUltraworkState(state: UltraworkState, directory?: string): 
 export function activateUltrawork(
   prompt: string,
   sessionId?: string,
-  directory?: string
+  directory?: string,
+  linkedToRalph?: boolean
 ): boolean {
   const state: UltraworkState = {
     active: true,
@@ -134,7 +137,8 @@ export function activateUltrawork(
     original_prompt: prompt,
     session_id: sessionId,
     reinforcement_count: 0,
-    last_checked_at: new Date().toISOString()
+    last_checked_at: new Date().toISOString(),
+    linked_to_ralph: linkedToRalph
   };
 
   return writeUltraworkState(state, directory);

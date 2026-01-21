@@ -1,79 +1,87 @@
 ---
-description: Activate maximum performance mode with parallel agent orchestration
+description: Activate maximum performance mode with parallel agent orchestration for high-throughput task completion
 ---
 
-[ULTRAWORK MODE ACTIVATED - THE BOULDER NEVER STOPS]
+# Ultrawork Skill
 
-$ARGUMENTS
+Activates maximum performance mode with parallel agent orchestration.
 
-## THE ULTRAWORK OATH
+## When Activated
 
-You are now operating at MAXIMUM INTENSITY. Half-measures are unacceptable. Incomplete work is FAILURE. You will persist until EVERY task is VERIFIED complete.
+This skill enhances Claude's capabilities by:
 
-## Enhanced Execution Instructions
+1. **Parallel Execution**: Running multiple agents simultaneously for independent tasks
+2. **Aggressive Delegation**: Routing tasks to specialist agents immediately
+3. **Background Operations**: Using `run_in_background: true` for long operations
+4. **Persistence Enforcement**: Never stopping until all tasks are verified complete
+5. **Smart Model Routing**: Using tiered agents to save tokens
 
-### 1. PARALLEL EVERYTHING
-- Fire off MULTIPLE agents simultaneously for independent tasks
-- Don't wait when you can parallelize
-- Use background execution for ALL long-running operations
-- Maximum throughput is the goal
+## Smart Model Routing (CRITICAL - SAVE TOKENS)
 
-### 2. DELEGATE AGGRESSIVELY
-Route tasks to specialists immediately:
-- `oracle` → Complex debugging, architecture, root cause analysis
-- `librarian` → Documentation research, codebase understanding
-- `explore` → Fast pattern matching, file/code searches
-- `frontend-engineer` → UI/UX, components, styling
-- `document-writer` → README, API docs, technical writing
-- `multimodal-looker` → Screenshot/diagram analysis
-- `momus` → Plan review and critique
-- `metis` → Pre-planning, hidden requirements
-- `prometheus` → Strategic planning
+**Choose tier based on task complexity: LOW (haiku) → MEDIUM (sonnet) → HIGH (opus)**
 
-### 3. BACKGROUND EXECUTION
-- Bash: set `run_in_background: true` for npm install, builds, tests
-- Task: set `run_in_background: true` for long-running subagent work
-- Check results with `TaskOutput` tool
-- Maximum 5 concurrent background tasks
-- DON'T WAIT - start the next task while background runs
+### Available Agents by Tier
 
-### 4. PERSISTENCE ENFORCEMENT
-- Create TODO list immediately with TodoWrite
-- Mark tasks in_progress BEFORE starting
-- Mark tasks completed ONLY after VERIFICATION
-- LOOP until todo list shows 100% complete
-- Re-check todo list before ANY conclusion attempt
+| Domain | LOW (Haiku) | MEDIUM (Sonnet) | HIGH (Opus) |
+|--------|-------------|-----------------|-------------|
+| **Analysis** | `architect-low` | `architect-medium` | `architect` |
+| **Execution** | `executor-low` | `executor` | `executor-high` |
+| **Search** | `explore` | `explore-medium` | - |
+| **Research** | `researcher-low` | `researcher` | - |
+| **Frontend** | `designer-low` | `designer` | `designer-high` |
+| **Docs** | `writer` | - | - |
+| **Visual** | - | `vision` | - |
+| **Planning** | - | - | `planner`, `critic`, `analyst` |
+| **Testing** | - | `qa-tester` | - |
 
-## THE ULTRAWORK PROMISE
+### Tier Selection Guide
 
-Before stopping, VERIFY:
-- [ ] Todo list: ZERO pending/in_progress tasks
-- [ ] All functionality: TESTED and WORKING
-- [ ] All errors: RESOLVED
-- [ ] User's request: FULLY SATISFIED
+| Task Complexity | Tier | Examples |
+|-----------------|------|----------|
+| Simple lookups | LOW | "What does this function return?", "Find where X is defined" |
+| Standard work | MEDIUM | "Add error handling", "Implement this feature" |
+| Complex analysis | HIGH | "Debug this race condition", "Refactor auth module across 5 files" |
 
-If ANY checkbox is unchecked, CONTINUE WORKING. No exceptions.
+### Routing Examples
 
-## ORACLE VERIFICATION (MANDATORY BEFORE COMPLETION)
+**CRITICAL: Always pass `model` parameter explicitly - Claude Code does NOT auto-apply models from agent definitions!**
 
-**You CANNOT declare task complete without Oracle approval.**
-
-### Step 1: Self-Check
-Run through the verification checklist above.
-
-### Step 2: Oracle Review
 ```
-Task(subagent_type="oracle", prompt="VERIFY COMPLETION:
-Original task: [describe the task]
-What I implemented: [list ALL changes made]
-Tests run: [test results]
-Please verify this is truly complete and production-ready.")
+// Simple question → LOW tier (saves tokens!)
+Task(subagent_type="architect-low", model="haiku", prompt="What does this function return?")
+
+// Standard implementation → MEDIUM tier
+Task(subagent_type="executor", model="sonnet", prompt="Add error handling to login")
+
+// Complex refactoring → HIGH tier
+Task(subagent_type="executor-high", model="opus", prompt="Refactor auth module using JWT across 5 files")
+
+// Quick file lookup → LOW tier
+Task(subagent_type="explore", model="haiku", prompt="Find where UserService is defined")
+
+// Thorough search → MEDIUM tier
+Task(subagent_type="explore-medium", model="sonnet", prompt="Find all authentication patterns in the codebase")
 ```
 
-### Step 3: Based on Oracle Response
-- **If APPROVED**: You may declare task complete
-- **If REJECTED**: Address ALL issues raised, then re-verify with Oracle
+## Background Execution Rules
 
-**NO COMPLETION WITHOUT ORACLE APPROVAL.**
+**Run in Background** (set `run_in_background: true`):
+- Package installation: npm install, pip install, cargo build
+- Build processes: npm run build, make, tsc
+- Test suites: npm test, pytest, cargo test
+- Docker operations: docker build, docker pull
 
-**CRITICAL: The boulder does not stop until it reaches the summit.**
+**Run Blocking** (foreground):
+- Quick status checks: git status, ls, pwd
+- File reads, edits
+- Simple commands
+
+## Verification Checklist
+
+Before stopping, verify:
+- [ ] TODO LIST: Zero pending/in_progress tasks
+- [ ] FUNCTIONALITY: All requested features work
+- [ ] TESTS: All tests pass (if applicable)
+- [ ] ERRORS: Zero unaddressed errors
+
+**If ANY checkbox is unchecked, CONTINUE WORKING.**

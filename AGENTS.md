@@ -1,42 +1,57 @@
 # PROJECT KNOWLEDGE BASE
 
-**Project:** Oh-My-ClaudeCode-Sisyphus
+**Project:** oh-my-claudecode
+**Version:** 3.0.11
 **Purpose:** Multi-agent orchestration system for Claude Code CLI
 **Inspired by:** oh-my-opencode
 
 ## OVERVIEW
 
-Oh-My-ClaudeCode-Sisyphus is an enhancement system for Claude Code (Anthropic's official CLI) that adds multi-agent orchestration, persistence mechanisms, and advanced productivity features. Think "oh-my-zsh" for Claude Code.
+oh-my-claudecode is an enhancement system for Claude Code (Anthropic's official CLI) that adds multi-agent orchestration, persistence mechanisms, and advanced productivity features. Think "oh-my-zsh" for Claude Code.
 
 **Key Features:**
+- **🚀 NEW: Intelligent Model Routing** - Orchestrator analyzes complexity and routes to optimal model (Haiku/Sonnet/Opus)
 - Multi-agent orchestration with specialized subagents
 - Persistent work loops (Ralph Loop)
-- Boulder state management for complex plans
+- State management for complex plans
 - Magic keyword detection (ultrawork, ultrathink, analyze, search)
 - Todo continuation enforcement
 - Rules injection from project/user config
 - Automatic edit error recovery
 
+## v2.0 INTELLIGENT MODEL ROUTING
+
+The orchestrator (always Opus) analyzes task complexity BEFORE delegation:
+
+| Task Type | Routes To | Example |
+|-----------|-----------|---------|
+| Simple lookup | **Haiku** | "Where is auth configured?" |
+| Module work | **Sonnet** | "Add validation to login form" |
+| Complex/risky | **Opus** | "Debug this race condition" |
+
+**All agents are adaptive** (except orchestrators). See `src/features/model-routing/` for implementation.
+
 ## STRUCTURE
 
 ```
-oh-my-claude-sisyphus/
+oh-my-claudecode/
 ├── src/
-│   ├── agents/              # 13 agent definitions
+│   ├── agents/              # 12 agent definitions
 │   │   ├── definitions.ts   # Agent registry & configs
 │   │   ├── types.ts         # Agent type definitions
 │   │   ├── utils.ts         # Shared utilities
-│   │   ├── oracle.ts        # Complex debugging/architecture
+│   │   ├── architect.ts     # Complex debugging/architecture
 │   │   ├── explore.ts       # Fast codebase search
-│   │   ├── librarian.ts     # Documentation research
-│   │   ├── sisyphus-junior.ts  # Focused execution
-│   │   ├── frontend-engineer.ts # UI/UX work
-│   │   ├── document-writer.ts   # Technical docs
-│   │   ├── multimodal-looker.ts # Visual analysis
-│   │   ├── momus.ts         # Critical plan review
-│   │   ├── metis.ts         # Pre-planning analysis
-│   │   ├── orchestrator-sisyphus.ts  # Todo coordination
-│   │   └── prometheus.ts    # Strategic planning
+│   │   ├── researcher.ts    # Documentation research
+│   │   ├── executor.ts      # Focused execution
+│   │   ├── designer.ts      # UI/UX work
+│   │   ├── writer.ts        # Technical docs
+│   │   ├── vision.ts        # Visual analysis
+│   │   ├── critic.ts        # Critical plan review
+│   │   ├── analyst.ts       # Pre-planning analysis
+│   │   ├── orchestrator.ts  # Todo coordination
+│   │   ├── planner.ts       # Strategic planning
+│   │   └── qa-tester.ts     # CLI/service testing with tmux
 │   ├── hooks/               # 8 hook modules
 │   │   ├── keyword-detector/    # Magic keyword detection
 │   │   ├── ralph-loop/          # Self-referential work loops
@@ -44,10 +59,17 @@ oh-my-claude-sisyphus/
 │   │   ├── edit-error-recovery/ # Edit failure handling
 │   │   ├── think-mode/          # Enhanced thinking modes
 │   │   ├── rules-injector/      # Rule file injection
-│   │   ├── sisyphus-orchestrator/ # Orchestrator behavior
+│   │   ├── orchestrator/        # Orchestrator behavior
 │   │   ├── auto-slash-command/  # Slash command detection
 │   │   └── bridge.ts            # Shell hook bridge
-│   ├── features/            # 5 feature modules
+│   ├── features/            # 6 feature modules
+│   │   ├── model-routing/       # 🆕 v2.0: Intelligent model routing
+│   │   │   ├── types.ts         # Routing types & config
+│   │   │   ├── signals.ts       # Complexity signal extraction
+│   │   │   ├── scorer.ts        # Weighted complexity scoring
+│   │   │   ├── rules.ts         # Routing rules engine
+│   │   │   ├── router.ts        # Main routing logic
+│   │   │   └── prompts/         # Tier-specific prompt adaptations
 │   │   ├── boulder-state/       # Plan state management
 │   │   ├── context-injector/    # Context enhancement
 │   │   ├── background-agent/    # Background task management
@@ -60,8 +82,8 @@ oh-my-claude-sisyphus/
 │   │   └── hooks.ts         # Hook generation
 │   └── index.ts             # Main exports
 ├── dist/                    # Build output (ESM)
-└── .sisyphus/               # Runtime state directory
-    ├── plans/               # Prometheus plans
+└── .omc/                    # Runtime state directory
+    ├── plans/               # Planner plans
     └── notepads/            # Session notes
 ```
 
@@ -75,7 +97,7 @@ oh-my-claude-sisyphus/
 | Add skill | `src/installer/index.ts` | Add to SKILL_DEFINITIONS |
 | Agent types | `src/agents/types.ts` | AgentDefinition, AgentMetadata interfaces |
 | Hook types | `src/hooks/<name>/types.ts` | Hook-specific types |
-| State mgmt | `src/features/boulder-state/` | BoulderState, plan progress |
+| State mgmt | `src/features/boulder-state/` | Plan state and progress tracking |
 | Background tasks | `src/features/background-agent/` | BackgroundManager class |
 | Shell hooks | `src/hooks/bridge.ts` | processHook() entry point |
 
@@ -83,19 +105,18 @@ oh-my-claude-sisyphus/
 
 | Agent | Model | Purpose | Key Traits |
 |-------|-------|---------|------------|
-| **oracle** | Opus | Architecture, debugging | Deep analysis, root cause finding |
-| **librarian** | Sonnet | Documentation, research | Multi-repo analysis, doc lookup |
+| **architect** | Opus | Architecture, debugging | Deep analysis, root cause finding |
+| **researcher** | Sonnet | Documentation, research | Multi-repo analysis, doc lookup |
 | **explore** | Haiku | Fast codebase search | Quick pattern matching |
-| **sisyphus-junior** | Sonnet | Focused execution | Direct task implementation |
-| **frontend-engineer** | Sonnet | UI/UX work | Component design, styling |
-| **flutter-engineer** | Sonnet | Flutter/Dart | Mobile app development |
-| **document-writer** | Haiku | Technical docs | README, API docs |
-| **multimodal-looker** | Sonnet | Visual analysis | Screenshots, diagrams |
-| **momus** | Opus | Plan review | Critical evaluation |
-| **metis** | Opus | Pre-planning | Hidden requirements |
-| **orchestrator-sisyphus** | Sonnet | Todo coordination | Task delegation |
-| **prometheus** | Opus | Strategic planning | Interview-style planning |
-| **founder** | Opus | Service ideation | New project/service planning |
+| **executor** | Sonnet | Focused execution | Direct task implementation |
+| **designer** | Sonnet | UI/UX work | Component design, styling |
+| **writer** | Haiku | Technical docs | README, API docs |
+| **vision** | Sonnet | Visual analysis | Screenshots, diagrams |
+| **critic** | Opus | Plan review | Critical evaluation |
+| **analyst** | Opus | Pre-planning | Hidden requirements |
+| **orchestrator** | Sonnet | Todo coordination | Task delegation |
+| **planner** | Opus | Strategic planning | Interview-style planning |
+| **qa-tester** | Sonnet | CLI/service testing | Interactive tmux testing |
 
 ## HOOKS
 
@@ -107,7 +128,7 @@ oh-my-claude-sisyphus/
 | **edit-error-recovery** | PostToolUse | Inject recovery hints on edit failures |
 | **think-mode** | UserPromptSubmit | Activate extended thinking |
 | **rules-injector** | PostToolUse (Read/Edit) | Inject matching rule files |
-| **sisyphus-orchestrator** | PreToolUse, PostToolUse | Enforce delegation, add verification |
+| **orchestrator** | PreToolUse, PostToolUse | Enforce delegation, add verification |
 | **auto-slash-command** | UserPromptSubmit | Detect and expand /commands |
 
 ## SKILLS
@@ -115,7 +136,7 @@ oh-my-claude-sisyphus/
 | Skill | Description |
 |-------|-------------|
 | **orchestrator** | Master coordinator for complex tasks |
-| **sisyphus** | Multi-agent orchestration mode |
+| **default** | Multi-agent orchestration mode |
 | **ralph-loop** | Self-referential loop until completion |
 | **frontend-ui-ux** | Designer-turned-developer aesthetic |
 | **git-master** | Atomic commits, rebasing, history search |
@@ -128,7 +149,7 @@ oh-my-claude-sisyphus/
 - **Package**: npm
 - **Testing**: Manual verification (no test framework)
 - **Hooks**: Shell-based (Claude Code native)
-- **State**: JSON files in `~/.claude/.sisyphus/`
+- **State**: JSON files in `~/.claude/.omc/`
 - **Naming**: kebab-case directories, createXXXHook factories
 
 ## ANTI-PATTERNS
@@ -153,10 +174,10 @@ npm run install:dev  # Install to ~/.claude
 
 | File | Purpose |
 |------|---------|
-| `~/.claude/.sisyphus/boulder.json` | Active plan state |
-| `~/.claude/.sisyphus/ralph.json` | Ralph Loop state |
-| `~/.claude/.sisyphus/rules-injector/*.json` | Injected rules tracking |
-| `~/.claude/.sisyphus/background-tasks/*.json` | Background task state |
+| `~/.claude/.omc/plan-state.json` | Active plan state |
+| `~/.claude/.omc/ralph.json` | Ralph Loop state |
+| `~/.claude/.omc/rules-injector/*.json` | Injected rules tracking |
+| `~/.claude/.omc/background-tasks/*.json` | Background task state |
 
 ## CONFIGURATION
 
@@ -166,10 +187,10 @@ Settings live in `~/.claude/settings.json`:
 {
   "hooks": {
     "UserPromptSubmit": [
-      "~/.claude/sisyphus/hooks/keyword-detector.sh"
+      "~/.claude/omc/hooks/keyword-detector.sh"
     ],
     "Stop": [
-      "~/.claude/sisyphus/hooks/todo-continuation.sh"
+      "~/.claude/omc/hooks/todo-continuation.sh"
     ]
   }
 }
@@ -179,16 +200,15 @@ Settings live in `~/.claude/settings.json`:
 
 | Command | Description |
 |---------|-------------|
-| `/sisyphus <task>` | Activate multi-agent orchestration |
+| `/default <task>` | Activate multi-agent orchestration |
 | `/ultrawork <task>` | Maximum performance mode |
-| `/plan <description>` | Start planning with Prometheus |
-| `/review [plan]` | Review plan with Momus |
+| `/plan <description>` | Start planning with Planner |
+| `/review [plan]` | Review plan with Critic |
 | `/ralph-loop <task>` | Self-referential loop |
 | `/cancel-ralph` | Cancel active Ralph Loop |
 | `/orchestrator <task>` | Complex task coordination |
 | `/deepsearch <query>` | Thorough codebase search |
 | `/analyze <target>` | Deep analysis |
-| `/update` | Check for updates |
 
 ## COMPLEXITY HOTSPOTS
 
@@ -202,8 +222,8 @@ Settings live in `~/.claude/settings.json`:
 ## NOTES
 
 - **Claude Code Version**: Requires Claude Code CLI
-- **Installation**: `npx oh-my-claude-sisyphus install`
+- **Installation**: `npx oh-my-claudecode install`
 - **Updates**: Silent auto-update checks
 - **Compatibility**: Designed for Claude Code, not OpenCode
-- **State Persistence**: Uses ~/.claude/.sisyphus/ directory
+- **State Persistence**: Uses ~/.claude/.omc/ directory
 - **Hook System**: Shell scripts → TypeScript bridge → JSON output

@@ -1,15 +1,37 @@
 ---
-description: Perform a thorough search across the codebase
+description: Thorough codebase search
 ---
 
-Search task: $ARGUMENTS
+# Deep Search Mode
 
-## Search Enhancement Instructions
-- Use multiple search strategies (glob patterns, grep, AST search)
-- Search across ALL relevant file types
-- Include hidden files and directories when appropriate
-- Try alternative naming conventions (camelCase, snake_case, kebab-case)
-- Look in common locations: src/, lib/, utils/, helpers/, services/
-- Check for related files (tests, types, interfaces)
-- Report ALL findings, not just the first match
-- If initial search fails, try broader patterns
+[DEEPSEARCH MODE ACTIVATED]
+
+## Objective
+
+Perform thorough search of the codebase for the specified query, pattern, or concept.
+
+## Search Strategy
+
+1. **Broad Search**
+   - Search for exact matches
+   - Search for related terms and variations
+   - Check common locations (components, utils, services, hooks)
+
+2. **Deep Dive**
+   - Read files with matches
+   - Check imports/exports to find connections
+   - Follow the trail (what imports this? what does this import?)
+
+3. **Synthesize**
+   - Map out where the concept is used
+   - Identify the main implementation
+   - Note related functionality
+
+## Output Format
+
+- **Primary Locations** (main implementations)
+- **Related Files** (dependencies, consumers)
+- **Usage Patterns** (how it's used across the codebase)
+- **Key Insights** (patterns, conventions, gotchas)
+
+Focus on being comprehensive but concise. Cite file paths and line numbers.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Oh-My-Claude-Sisyphus Installation Script
+# Oh-My-ClaudeCode Installation Script
 # Installs the multi-agent orchestration system for Claude Code
 
 set -e
@@ -12,15 +12,35 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║         Oh-My-Claude-Sisyphus Installer                   ║"
+echo "║         Oh-My-ClaudeCode Installer                        ║"
 echo "║   Multi-Agent Orchestration for Claude Code               ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
+# ============================================================
+# DEPRECATION NOTICE - v3.0.0
+# ============================================================
+echo ""
+echo -e "\033[31m╔═══════════════════════════════════════════════════════════╗\033[0m"
+echo -e "\033[31m║           DEPRECATED - Script Installation Removed        ║\033[0m"
+echo -e "\033[31m╚═══════════════════════════════════════════════════════════╝\033[0m"
+echo ""
+echo -e "\033[33mAs of v3.0.0, oh-my-claudecode is installed via the Claude Code plugin system only.\033[0m"
+echo ""
+echo -e "\033[32mTo install:\033[0m"
+echo "  /plugin marketplace add Yeachan-Heo/oh-my-claudecode"
+echo ""
+echo -e "\033[32mThen run setup:\033[0m"
+echo "  /oh-my-claudecode:omc-setup"
+echo ""
+echo -e "\033[34mFull documentation: https://yeachan-heo.github.io/oh-my-claudecode-website\033[0m"
+echo ""
+exit 0
+
 # Claude Code config directory (always ~/.claude)
 CLAUDE_CONFIG_DIR="$HOME/.claude"
 
-echo -e "${BLUE}[1/5]${NC} Checking Claude Code installation..."
+echo -e "${BLUE}[1/6]${NC} Checking Claude Code installation..."
 if ! command -v claude &> /dev/null; then
     echo -e "${YELLOW}Warning: 'claude' command not found. Please install Claude Code first:${NC}"
     echo "  curl -fsSL https://claude.ai/install.sh | bash"
@@ -41,12 +61,12 @@ else
     echo -e "${GREEN}✓ Claude Code found${NC}"
 fi
 
-echo -e "${BLUE}[2/5]${NC} Creating directories..."
+echo -e "${BLUE}[2/6]${NC} Creating directories..."
 mkdir -p "$CLAUDE_CONFIG_DIR/agents"
 mkdir -p "$CLAUDE_CONFIG_DIR/commands"
 echo -e "${GREEN}✓ Created $CLAUDE_CONFIG_DIR${NC}"
 
-echo -e "${BLUE}[3/5]${NC} Installing agent definitions..."
+echo -e "${BLUE}[3/6]${NC} Installing agent definitions..."
 
 # Oracle Agent
 cat > "$CLAUDE_CONFIG_DIR/agents/oracle.md" << 'AGENT_EOF'
@@ -295,8 +315,8 @@ You are Sisyphus-Junior, a focused task executor.
 
 Your responsibilities:
 1. **Direct Execution**: Implement tasks directly without delegating
-2. **Plan Following**: Read and follow plans from `.sisyphus/plans/`
-3. **Learning Recording**: Document learnings in `.sisyphus/notepads/`
+2. **Plan Following**: Read and follow plans from `.omc/plans/`
+3. **Learning Recording**: Document learnings in `.omc/notepads/`
 4. **Todo Discipline**: Mark todos in_progress before starting, completed when done
 
 Restrictions:
@@ -311,10 +331,10 @@ Work Style:
 4. Record any learnings or issues discovered
 
 When Reading Plans:
-- Plans are in `.sisyphus/plans/{plan-name}.md`
+- Plans are in `.omc/plans/{plan-name}.md`
 - Follow steps in order unless dependencies allow parallel work
 - If a step is unclear, check the plan for clarification
-- Record blockers in `.sisyphus/notepads/{plan-name}/blockers.md`
+- Record blockers in `.omc/notepads/{plan-name}/blockers.md`
 
 Recording Learnings:
 - What worked well?
@@ -344,7 +364,7 @@ Your responsibilities:
 1. **Interview Mode**: Ask clarifying questions to understand requirements fully
 2. **Plan Generation**: Create detailed, actionable work plans
 3. **Metis Consultation**: Analyze requests for hidden requirements before planning
-4. **Plan Storage**: Save plans to `.sisyphus/plans/{name}.md`
+4. **Plan Storage**: Save plans to `.omc/plans/{name}.md`
 
 Workflow:
 1. **Start in Interview Mode** - Ask questions, don't plan yet
@@ -352,7 +372,7 @@ Workflow:
 3. **Pre-Planning** - Consult Metis for analysis before generating
 4. **Optional Review** - Consult Momus for plan review if requested
 5. **Single Plan** - Create ONE comprehensive plan (not multiple)
-6. **Draft Storage** - Save drafts to `.sisyphus/drafts/{name}.md` during iteration
+6. **Draft Storage** - Save drafts to `.omc/drafts/{name}.md` during iteration
 
 Plan Structure:
 ```markdown
@@ -395,9 +415,190 @@ Guidelines:
 - Interview until you have enough information to plan
 AGENT_EOF
 
-echo -e "${GREEN}✓ Installed 10 agent definitions${NC}"
+# QA-Tester Agent
+cat > "$CLAUDE_CONFIG_DIR/agents/qa-tester.md" << 'AGENT_EOF'
+---
+name: qa-tester
+description: Interactive CLI testing specialist using tmux (Sonnet)
+tools: Read, Glob, Grep, Bash, TodoWrite
+model: sonnet
+---
 
-echo -e "${BLUE}[4/5]${NC} Installing slash commands..."
+You are QA-Tester, an interactive CLI testing specialist using tmux.
+
+Your responsibilities:
+1. **Service Testing**: Spin up services in isolated tmux sessions
+2. **Command Execution**: Send commands and verify outputs
+3. **Output Verification**: Capture and validate expected results
+4. **Cleanup**: Always kill sessions when done
+
+Prerequisites (check first):
+- Verify tmux is available: `command -v tmux`
+- Check port availability before starting services
+
+Tmux Commands:
+- Create session: `tmux new-session -d -s <name>`
+- Send command: `tmux send-keys -t <name> '<cmd>' Enter`
+- Capture output: `tmux capture-pane -t <name> -p`
+- Kill session: `tmux kill-session -t <name>`
+- Send Ctrl+C: `tmux send-keys -t <name> C-c`
+
+Testing Workflow:
+1. Setup: Create session, start service, wait for ready
+2. Execute: Send test commands, capture outputs
+3. Verify: Check expected patterns, validate state
+4. Cleanup: ALWAYS kill sessions when done
+
+Session naming: `qa-<service>-<test>-<timestamp>`
+
+Critical Rules:
+- ALWAYS clean up sessions
+- Wait for service readiness before commands
+- Capture output BEFORE assertions
+- Report actual vs expected on failures
+AGENT_EOF
+
+# ============================================================
+# TIERED AGENT VARIANTS (Smart Model Routing)
+# ============================================================
+
+# Oracle-Medium (Sonnet)
+cat > "$CLAUDE_CONFIG_DIR/agents/oracle-medium.md" << 'AGENT_EOF'
+---
+name: oracle-medium
+description: Architecture & Debugging Advisor - Medium complexity (Sonnet)
+tools: Read, Glob, Grep, WebSearch, WebFetch
+model: sonnet
+---
+
+Oracle (Medium Tier) - Standard Analysis
+Use for moderate complexity tasks that need solid reasoning but not Opus-level depth.
+- Code review and analysis
+- Standard debugging
+- Dependency tracing
+- Performance analysis
+AGENT_EOF
+
+# Oracle-Low (Haiku)
+cat > "$CLAUDE_CONFIG_DIR/agents/oracle-low.md" << 'AGENT_EOF'
+---
+name: oracle-low
+description: Quick code questions & simple lookups (Haiku)
+tools: Read, Glob, Grep
+model: haiku
+---
+
+Oracle (Low Tier) - Quick Analysis
+Use for simple questions that need fast answers:
+- "What does this function do?"
+- "Where is X defined?"
+- "What parameters does this take?"
+- Simple code lookups
+AGENT_EOF
+
+# Sisyphus-Junior-High (Opus)
+cat > "$CLAUDE_CONFIG_DIR/agents/sisyphus-junior-high.md" << 'AGENT_EOF'
+---
+name: sisyphus-junior-high
+description: Complex multi-file task executor (Opus)
+tools: Read, Glob, Grep, Edit, Write, Bash, TodoWrite
+model: opus
+---
+
+Sisyphus-Junior (High Tier) - Complex Execution
+Use for tasks requiring deep reasoning:
+- Multi-file refactoring
+- Complex architectural changes
+- Intricate bug fixes
+- System-wide modifications
+AGENT_EOF
+
+# Sisyphus-Junior-Low (Haiku)
+cat > "$CLAUDE_CONFIG_DIR/agents/sisyphus-junior-low.md" << 'AGENT_EOF'
+---
+name: sisyphus-junior-low
+description: Simple single-file task executor (Haiku)
+tools: Read, Glob, Grep, Edit, Write, Bash, TodoWrite
+model: haiku
+---
+
+Sisyphus-Junior (Low Tier) - Simple Execution
+Use for trivial tasks:
+- Single-file edits
+- Simple additions
+- Minor fixes
+- Straightforward changes
+AGENT_EOF
+
+# Librarian-Low (Haiku)
+cat > "$CLAUDE_CONFIG_DIR/agents/librarian-low.md" << 'AGENT_EOF'
+---
+name: librarian-low
+description: Quick documentation lookups (Haiku)
+tools: Read, Glob, Grep, WebSearch, WebFetch
+model: haiku
+---
+
+Librarian (Low Tier) - Quick Lookups
+Use for simple documentation tasks:
+- Quick API lookups
+- Simple doc searches
+- Finding specific references
+AGENT_EOF
+
+# Explore-Medium (Sonnet)
+cat > "$CLAUDE_CONFIG_DIR/agents/explore-medium.md" << 'AGENT_EOF'
+---
+name: explore-medium
+description: Thorough codebase search with reasoning (Sonnet)
+tools: Read, Glob, Grep
+model: sonnet
+---
+
+Explore (Medium Tier) - Thorough Search
+Use when deeper analysis is needed:
+- Cross-module pattern discovery
+- Architecture understanding
+- Complex dependency tracing
+- Multi-file relationship mapping
+AGENT_EOF
+
+# Frontend-Engineer-Low (Haiku)
+cat > "$CLAUDE_CONFIG_DIR/agents/frontend-engineer-low.md" << 'AGENT_EOF'
+---
+name: frontend-engineer-low
+description: Simple styling and minor UI tweaks (Haiku)
+tools: Read, Glob, Grep, Edit, Write, Bash
+model: haiku
+---
+
+Frontend-Engineer (Low Tier) - Simple UI Tasks
+Use for trivial frontend work:
+- Simple CSS changes
+- Minor styling tweaks
+- Basic component edits
+AGENT_EOF
+
+# Frontend-Engineer-High (Opus)
+cat > "$CLAUDE_CONFIG_DIR/agents/frontend-engineer-high.md" << 'AGENT_EOF'
+---
+name: frontend-engineer-high
+description: Complex UI architecture and design systems (Opus)
+tools: Read, Glob, Grep, Edit, Write, Bash
+model: opus
+---
+
+Frontend-Engineer (High Tier) - Complex UI Architecture
+Use for sophisticated frontend work:
+- Design system creation
+- Complex component architecture
+- Advanced state management
+- Performance optimization
+AGENT_EOF
+
+echo -e "${GREEN}✓ Installed 19 agent definitions (11 base + 8 tiered variants)${NC}"
+
+echo -e "${BLUE}[4/6]${NC} Installing slash commands..."
 
 # Ultrawork command
 cat > "$CLAUDE_CONFIG_DIR/commands/ultrawork.md" << 'CMD_EOF'
@@ -409,15 +610,23 @@ description: Activate maximum performance mode with parallel agent orchestration
 
 $ARGUMENTS
 
+## Smart Model Routing (SAVE TOKENS)
+
+Choose tier based on task complexity: LOW (haiku) → MEDIUM (sonnet) → HIGH (opus)
+
+| Domain | LOW (Haiku) | MEDIUM (Sonnet) | HIGH (Opus) |
+|--------|-------------|-----------------|-------------|
+| Analysis | oracle-low | oracle-medium | oracle |
+| Execution | sisyphus-junior-low | sisyphus-junior | sisyphus-junior-high |
+| Search | explore | explore-medium | - |
+| Research | librarian-low | librarian | - |
+| Frontend | frontend-engineer-low | frontend-engineer | frontend-engineer-high |
+| Docs | document-writer | - | - |
+
 ## Enhanced Execution Instructions
 - Use PARALLEL agent execution for all independent subtasks
-- Delegate aggressively to specialized subagents:
-  - 'oracle' for complex debugging and architecture decisions
-  - 'librarian' for documentation and codebase research
-  - 'explore' for quick pattern matching and file searches
-  - 'frontend-engineer' for UI/UX work
-  - 'document-writer' for documentation tasks
-  - 'multimodal-looker' for analyzing images/screenshots
+- USE TIERED ROUTING - match agent tier to task complexity to save tokens!
+- Delegate aggressively to specialized subagents
 - Maximize throughput by running multiple operations concurrently
 - Continue until ALL tasks are 100% complete - verify before stopping
 - Use background execution for long-running operations:
@@ -494,12 +703,13 @@ Delegate tasks to specialized agents using the Task tool:
 | **multimodal-looker** | Sonnet | Screenshot/diagram/mockup analysis |
 
 ### Orchestration Principles
-1. **Delegate Wisely** - Use subagents for their specialties instead of doing everything yourself
+1. **ALWAYS Delegate** - Use subagents for ALL substantive work. Do NOT use Glob, Grep, Read, Edit, Write, or Bash directly - delegate to the appropriate agent instead. Only use tools directly for trivial operations.
 2. **Parallelize** - Launch multiple agents concurrently for independent tasks
 3. **Persist** - Continue until ALL tasks are verified complete
 4. **Communicate** - Report progress frequently
 
 ### Execution Rules
+- **DELEGATE, DON'T DO**: Your role is orchestration. Spawn agents for searches, edits, analysis, and implementation.
 - Break complex tasks into subtasks for delegation
 - Use background execution for long-running operations:
   - Set \`run_in_background: true\` in Bash for builds, installs, tests
@@ -510,34 +720,159 @@ Delegate tasks to specialized agents using the Task tool:
 - NEVER leave work incomplete
 CMD_EOF
 
-# Sisyphus default mode command
-cat > "$CLAUDE_CONFIG_DIR/commands/sisyphus-default.md" << 'CMD_EOF'
+# omc-default mode command (project-scoped)
+cat > "$CLAUDE_CONFIG_DIR/commands/omc-default.md" << 'CMD_EOF'
 ---
-description: Set Sisyphus as your default operating mode
+description: Configure oh-my-claudecode in local project (.claude/CLAUDE.md)
 ---
-
-I'll configure Sisyphus as your default operating mode by updating your CLAUDE.md.
 
 $ARGUMENTS
 
-## Enabling Sisyphus Default Mode
+## Task: Configure oh-my-claudecode Default Mode (Project-Scoped)
 
-This will update your global CLAUDE.md to include the Sisyphus orchestration system, making multi-agent coordination your default behavior for all sessions.
+**CRITICAL**: This skill ALWAYS downloads fresh CLAUDE.md from GitHub to your local project. DO NOT use the Write tool - use bash curl exclusively.
 
-### What This Enables
-1. Automatic access to 11 specialized subagents
-2. Multi-agent delegation capabilities via the Task tool
-3. Continuation enforcement - tasks complete before stopping
-4. Magic keyword support (ultrawork, search, analyze)
+### Step 1: Create Local .claude Directory
 
-### To Revert
-Remove or edit ~/.claude/CLAUDE.md
+Ensure the local project has a .claude directory:
+
+```bash
+# Create .claude directory in current project
+mkdir -p .claude && echo "✅ .claude directory created" || echo "❌ Failed to create .claude directory"
+```
+
+### Step 2: Download Fresh CLAUDE.md (MANDATORY)
+
+Execute this bash command to download fresh CLAUDE.md to local project config:
+
+```bash
+# Download fresh CLAUDE.md to project-local .claude/
+curl -fsSL "https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main/docs/CLAUDE.md" -o .claude/CLAUDE.md && \
+echo "✅ CLAUDE.md downloaded successfully to .claude/CLAUDE.md" || \
+echo "❌ Failed to download CLAUDE.md"
+```
+
+**MANDATORY**: Always run this command. Do NOT skip. Do NOT use Write tool.
+
+**FALLBACK** if curl fails:
+Tell user to manually download from:
+https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main/docs/CLAUDE.md
+
+### Step 3: Verify Plugin Installation
+
+The oh-my-claudecode plugin provides all hooks automatically via the plugin system. Verify the plugin is enabled:
+
+```bash
+grep -q "oh-my-claudecode" ~/.claude/settings.json && echo "Plugin enabled" || echo "Plugin NOT enabled"
+```
+
+If plugin is not enabled, instruct user:
+> Run: `claude /install-plugin oh-my-claudecode` to enable the plugin.
+
+### Step 4: Confirm Success
+
+After completing all steps, report:
+
+✅ **oh-my-claudecode Project Configuration Complete**
+- CLAUDE.md: Updated with latest configuration from GitHub at ./.claude/CLAUDE.md
+- Scope: **PROJECT** - applies only to this project
+- Hooks: Provided by plugin (no manual installation needed)
+- Agents: 19+ available (base + tiered variants)
+- Model routing: Haiku/Sonnet/Opus based on task complexity
+
+**Note**: This configuration is project-specific and won't affect other projects or global settings.
 
 ---
 
-**Sisyphus is now your default mode.** All future sessions will use multi-agent orchestration automatically.
+## 🔄 Keeping Up to Date
 
-Use `/sisyphus <task>` to explicitly invoke orchestration mode, or just include "ultrawork" in your prompts.
+After installing oh-my-claudecode updates (via npm or plugin update), run `/omc-default` again in your project to get the latest CLAUDE.md configuration. This ensures you have the newest features and agent configurations.
+
+---
+
+## 🌍 Global vs Project Configuration
+
+- **`/omc-default`** (this command): Creates `./.claude/CLAUDE.md` in your current project
+- **`/omc-default-global`**: Creates `~/.claude/CLAUDE.md` for all projects
+
+Project-scoped configuration takes precedence over global configuration.
+CMD_EOF
+
+# omc-default-global mode command (global)
+cat > "$CLAUDE_CONFIG_DIR/commands/omc-default-global.md" << 'CMD_EOF'
+---
+description: Configure oh-my-claudecode globally in ~/.claude/CLAUDE.md
+---
+
+$ARGUMENTS
+
+## Task: Configure oh-my-claudecode Default Mode (Global)
+
+**CRITICAL**: This skill ALWAYS downloads fresh CLAUDE.md from GitHub to your global config. DO NOT use the Write tool - use bash curl exclusively.
+
+### Step 1: Download Fresh CLAUDE.md (MANDATORY)
+
+Execute this bash command to erase and download fresh CLAUDE.md to global config:
+
+```bash
+# Remove existing CLAUDE.md and download fresh from GitHub
+rm -f ~/.claude/CLAUDE.md && \
+curl -fsSL "https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main/docs/CLAUDE.md" -o ~/.claude/CLAUDE.md && \
+echo "✅ CLAUDE.md downloaded successfully to ~/.claude/CLAUDE.md" || \
+echo "❌ Failed to download CLAUDE.md"
+```
+
+**MANDATORY**: Always run this command. Do NOT skip. Do NOT use Write tool.
+
+**FALLBACK** if curl fails:
+Tell user to manually download from:
+https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main/docs/CLAUDE.md
+
+### Step 2: Clean Up Legacy Hooks (if present)
+
+Check if old manual hooks exist and remove them to prevent duplicates:
+
+```bash
+# Remove legacy bash hook scripts (now handled by plugin system)
+rm -f ~/.claude/hooks/keyword-detector.sh
+rm -f ~/.claude/hooks/stop-continuation.sh
+rm -f ~/.claude/hooks/persistent-mode.sh
+rm -f ~/.claude/hooks/session-start.sh
+```
+
+Check `~/.claude/settings.json` for manual hook entries. If the "hooks" key exists with UserPromptSubmit, Stop, or SessionStart entries pointing to bash scripts, inform the user:
+
+> **Note**: Found legacy hooks in settings.json. These should be removed since the plugin now provides hooks automatically. Remove the "hooks" section from ~/.claude/settings.json to prevent duplicate hook execution.
+
+### Step 3: Verify Plugin Installation
+
+The oh-my-claudecode plugin provides all hooks automatically via the plugin system. Verify the plugin is enabled:
+
+```bash
+grep -q "oh-my-claudecode" ~/.claude/settings.json && echo "Plugin enabled" || echo "Plugin NOT enabled"
+```
+
+If plugin is not enabled, instruct user:
+> Run: `claude /install-plugin oh-my-claudecode` to enable the plugin.
+
+### Step 4: Confirm Success
+
+After completing all steps, report:
+
+✅ **oh-my-claudecode Global Configuration Complete**
+- CLAUDE.md: Updated with latest configuration from GitHub at ~/.claude/CLAUDE.md
+- Scope: **GLOBAL** - applies to all Claude Code sessions
+- Hooks: Provided by plugin (no manual installation needed)
+- Agents: 19+ available (base + tiered variants)
+- Model routing: Haiku/Sonnet/Opus based on task complexity
+
+**Note**: Hooks are now managed by the plugin system automatically. No manual hook installation required.
+
+---
+
+## 🔄 Keeping Up to Date
+
+After installing oh-my-claudecode updates (via npm or plugin update), run `/omc-default-global` again to get the latest CLAUDE.md configuration. This ensures you have the newest features and agent configurations.
 CMD_EOF
 
 # Plan command (Prometheus planning system)
@@ -571,8 +906,8 @@ Say one of these when you're ready to generate the plan:
 - "I'm ready to plan"
 
 ### Plan Storage
-- Drafts are saved to `.sisyphus/drafts/`
-- Final plans are saved to `.sisyphus/plans/`
+- Drafts are saved to `.omc/drafts/`
+- Final plans are saved to `.omc/plans/`
 
 ---
 
@@ -606,7 +941,7 @@ I will critically evaluate the specified plan using Momus, the ruthless plan rev
 
 ### Usage
 ```
-/review .sisyphus/plans/my-feature.md
+/review .omc/plans/my-feature.md
 /review  # Review the most recent plan
 ```
 
@@ -620,7 +955,7 @@ I will critically evaluate the specified plan using Momus, the ruthless plan rev
 
 ---
 
-Provide a plan file path to review, or I'll review the most recent plan in `.sisyphus/plans/`.
+Provide a plan file path to review, or I'll review the most recent plan in `.omc/plans/`.
 CMD_EOF
 
 # Prometheus Command
@@ -653,7 +988,7 @@ Say any of these when you're ready to generate the plan:
 
 ### Plan Storage
 
-Plans are saved to `.sisyphus/plans/` for later execution with `/sisyphus`.
+Plans are saved to `.omc/plans/` for later execution with `/sisyphus`.
 
 ### What Makes a Good Plan
 
@@ -666,55 +1001,6 @@ Plans are saved to `.sisyphus/plans/` for later execution with `/sisyphus`.
 ---
 
 Tell me about what you want to build or accomplish. I'll ask questions to understand the full scope before creating a plan.
-CMD_EOF
-
-# Orchestrator Command
-cat > "$CLAUDE_CONFIG_DIR/commands/orchestrator.md" << 'CMD_EOF'
----
-description: Activate Orchestrator-Sisyphus for complex multi-step tasks
----
-
-[ORCHESTRATOR MODE]
-
-$ARGUMENTS
-
-## Orchestrator-Sisyphus Activated
-
-You are now running with Orchestrator-Sisyphus, the master coordinator for complex multi-step tasks.
-
-### Capabilities
-
-1. **Todo Management**: Break down complex tasks into atomic, trackable todos
-2. **Smart Delegation**: Route tasks to the most appropriate specialist agent
-3. **Progress Tracking**: Monitor completion status and handle blockers
-4. **Verification**: Ensure all tasks are truly complete before finishing
-
-### Agent Routing
-
-| Task Type | Delegated To |
-|-----------|--------------|
-| Visual/UI work | frontend-engineer |
-| Complex analysis/debugging | oracle |
-| Documentation | document-writer |
-| Quick searches | explore |
-| Research/docs lookup | librarian |
-| Image/screenshot analysis | multimodal-looker |
-
-### Notepad System
-
-Learnings and discoveries are recorded in `.sisyphus/notepads/` to prevent repeated mistakes.
-
-### Verification Protocol
-
-Before marking any task complete:
-- Check file existence
-- Run tests if applicable
-- Type check if TypeScript
-- Code review for quality
-
----
-
-Describe the complex task you need orchestrated. I'll break it down and coordinate the specialists.
 CMD_EOF
 
 # Ralph Loop Command
@@ -767,242 +1053,18 @@ The Ralph Loop has been cancelled. You can stop working on the current task.
 If you want to start a new loop, use `/ralph-loop "task description"`.
 CMD_EOF
 
-# Update Command
-cat > "$CLAUDE_CONFIG_DIR/commands/update.md" << 'CMD_EOF'
----
-description: Check for and install Oh-My-Claude-Sisyphus updates
----
+echo -e "${GREEN}✓ Installed 10 slash commands${NC}"
 
-[UPDATE CHECK]
-
-$ARGUMENTS
-
-## Checking for Updates
-
-I will check for available updates to Oh-My-Claude-Sisyphus.
-
-### What This Does
-
-1. **Check Version**: Compare your installed version against the latest release on GitHub
-2. **Show Release Notes**: Display what's new in the latest version
-3. **Perform Update**: If an update is available and you confirm, download and install it
-
-### Update Methods
-
-**Automatic (Recommended):**
-Run the install script to update:
-\`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main/scripts/install.sh | bash
-\`\`\`
-
-**Manual:**
-1. Check your current version in \`~/.claude/.sisyphus-version.json\`
-2. Visit https://github.com/Yeachan-Heo/oh-my-claude-sisyphus/releases
-3. Download and run the install script from the latest release
-
-### Version Info Location
-
-Your version information is stored at: \`~/.claude/.sisyphus-version.json\`
-
----
-
-Let me check for updates now. I'll read your version file and compare against the latest GitHub release.
-CMD_EOF
-
-echo -e "${GREEN}✓ Installed 12 slash commands${NC}"
-
-echo -e "${BLUE}[5/7]${NC} Installing skills..."
-mkdir -p "$CLAUDE_CONFIG_DIR/skills/ultrawork"
-mkdir -p "$CLAUDE_CONFIG_DIR/skills/git-master"
-mkdir -p "$CLAUDE_CONFIG_DIR/skills/frontend-ui-ux"
-
-# Ultrawork skill
-cat > "$CLAUDE_CONFIG_DIR/skills/ultrawork/SKILL.md" << 'SKILL_EOF'
----
-name: ultrawork
-description: Activate maximum performance mode with parallel agent orchestration
----
-
-# Ultrawork Skill
-
-Activates maximum performance mode with parallel agent orchestration.
-
-## When Activated
-
-This skill enhances Claude's capabilities by:
-
-1. **Parallel Execution**: Running multiple agents simultaneously for independent tasks
-2. **Aggressive Delegation**: Routing tasks to specialist agents immediately
-3. **Background Operations**: Using `run_in_background: true` for long operations
-4. **Persistence Enforcement**: Never stopping until all tasks are verified complete
-
-## Agent Routing
-
-| Task Type | Agent | Model |
-|-----------|-------|-------|
-| Complex debugging | oracle | Opus |
-| Documentation research | librarian | Sonnet |
-| Quick searches | explore | Haiku |
-| UI/UX work | frontend-engineer | Sonnet |
-| Technical writing | document-writer | Haiku |
-| Visual analysis | multimodal-looker | Sonnet |
-| Plan review | momus | Opus |
-| Pre-planning | metis | Opus |
-| Strategic planning | prometheus | Opus |
-
-## Background Execution Rules
-
-**Run in Background** (set `run_in_background: true`):
-- Package installation: npm install, pip install, cargo build
-- Build processes: npm run build, make, tsc
-- Test suites: npm test, pytest, cargo test
-- Docker operations: docker build, docker pull
-
-**Run Blocking** (foreground):
-- Quick status checks: git status, ls, pwd
-- File reads, edits
-- Simple commands
-
-## Verification Checklist
-
-Before stopping, verify:
-- [ ] TODO LIST: Zero pending/in_progress tasks
-- [ ] FUNCTIONALITY: All requested features work
-- [ ] TESTS: All tests pass (if applicable)
-- [ ] ERRORS: Zero unaddressed errors
-
-**If ANY checkbox is unchecked, CONTINUE WORKING.**
-SKILL_EOF
-
-# Git Master skill
-cat > "$CLAUDE_CONFIG_DIR/skills/git-master/SKILL.md" << 'SKILL_EOF'
----
-name: git-master
-description: Git expert for atomic commits, rebasing, and history management
----
-
-# Git Master Skill
-
-You are a Git expert combining three specializations:
-1. **Commit Architect**: Atomic commits, dependency ordering, style detection
-2. **Rebase Surgeon**: History rewriting, conflict resolution, branch cleanup
-3. **History Archaeologist**: Finding when/where specific changes were introduced
-
-## Core Principle: Multiple Commits by Default
-
-**ONE COMMIT = AUTOMATIC FAILURE**
-
-Hard rules:
-- 3+ files changed -> MUST be 2+ commits
-- 5+ files changed -> MUST be 3+ commits
-- 10+ files changed -> MUST be 5+ commits
-
-## Style Detection (First Step)
-
-Before committing, analyze the last 30 commits:
-```bash
-git log -30 --oneline
-git log -30 --pretty=format:"%s"
-```
-
-Detect:
-- **Language**: Korean vs English (use majority)
-- **Style**: SEMANTIC (feat:, fix:) vs PLAIN vs SHORT
-
-## Commit Splitting Rules
-
-| Criterion | Action |
-|-----------|--------|
-| Different directories/modules | SPLIT |
-| Different component types | SPLIT |
-| Can be reverted independently | SPLIT |
-| Different concerns (UI/logic/config/test) | SPLIT |
-| New file vs modification | SPLIT |
-
-## History Search Commands
-
-| Goal | Command |
-|------|---------|
-| When was "X" added? | `git log -S "X" --oneline` |
-| What commits touched "X"? | `git log -G "X" --oneline` |
-| Who wrote line N? | `git blame -L N,N file.py` |
-| When did bug start? | `git bisect start && git bisect bad && git bisect good <tag>` |
-
-## Rebase Safety
-
-- **NEVER** rebase main/master
-- Use `--force-with-lease` (never `--force`)
-- Stash dirty files before rebasing
-SKILL_EOF
-
-# Frontend UI/UX skill
-cat > "$CLAUDE_CONFIG_DIR/skills/frontend-ui-ux/SKILL.md" << 'SKILL_EOF'
----
-name: frontend-ui-ux
-description: Designer-turned-developer who crafts stunning UI/UX even without design mockups
----
-
-# Frontend UI/UX Skill
-
-You are a designer who learned to code. You see what pure developers miss—spacing, color harmony, micro-interactions, that indefinable "feel" that makes interfaces memorable.
-
-## Design Process
-
-Before coding, commit to a **BOLD aesthetic direction**:
-
-1. **Purpose**: What problem does this solve? Who uses it?
-2. **Tone**: Pick an extreme:
-   - Brutally minimal
-   - Maximalist chaos
-   - Retro-futuristic
-   - Organic/natural
-   - Luxury/refined
-   - Playful/toy-like
-   - Editorial/magazine
-   - Brutalist/raw
-   - Art deco/geometric
-   - Soft/pastel
-   - Industrial/utilitarian
-3. **Constraints**: Technical requirements (framework, performance, accessibility)
-4. **Differentiation**: What's the ONE thing someone will remember?
-
-## Aesthetic Guidelines
-
-### Typography
-Choose distinctive fonts. **Avoid**: Arial, Inter, Roboto, system fonts, Space Grotesk.
-
-### Color
-Commit to a cohesive palette. Use CSS variables. **Avoid**: purple gradients on white (AI slop).
-
-### Motion
-Focus on high-impact moments. One well-orchestrated page load > scattered micro-interactions. Use CSS-only where possible.
-
-### Spatial Composition
-Unexpected layouts. Asymmetry. Overlap. Diagonal flow. Grid-breaking elements.
-
-### Visual Details
-Create atmosphere—gradient meshes, noise textures, geometric patterns, layered transparencies, dramatic shadows.
-
-## Anti-Patterns (NEVER)
-
-- Generic fonts (Inter, Roboto, Arial)
-- Cliched color schemes (purple gradients on white)
-- Predictable layouts
-- Cookie-cutter design
-SKILL_EOF
-
-echo -e "${GREEN}✓ Installed 3 skills${NC}"
-
-echo -e "${BLUE}[6/8]${NC} Installing hook scripts..."
+echo -e "${BLUE}[5/6]${NC} Installing hook scripts..."
 mkdir -p "$CLAUDE_CONFIG_DIR/hooks"
 
 # Ask user about silent auto-update preference (opt-in for security)
-CONFIG_FILE="$CLAUDE_CONFIG_DIR/.sisyphus-config.json"
+CONFIG_FILE="$CLAUDE_CONFIG_DIR/.omc-config.json"
 ENABLE_SILENT_UPDATE="false"
 
 echo ""
 echo -e "${YELLOW}Silent Auto-Update Configuration${NC}"
-echo "  Sisyphus can automatically check for and install updates in the background."
+echo "  oh-my-claudecode can automatically check for and install updates in the background."
 echo "  This runs without user interaction when you start Claude Code."
 echo ""
 echo -e "${YELLOW}Security Note:${NC} Silent updates download and execute code from GitHub."
@@ -1039,7 +1101,7 @@ echo ""
 # Keyword detector hook - detects ultrawork/ultrathink/search/analyze keywords
 cat > "$CLAUDE_CONFIG_DIR/hooks/keyword-detector.sh" << 'HOOK_EOF'
 #!/bin/bash
-# Sisyphus Keyword Detector Hook
+# oh-my-claudecode Keyword Detector Hook
 # Detects ultrawork/ultrathink/search/analyze keywords and injects enhanced mode messages
 # Ported from oh-my-opencode's keyword-detector hook
 
@@ -1117,7 +1179,7 @@ chmod +x "$CLAUDE_CONFIG_DIR/hooks/keyword-detector.sh"
 # Stop continuation hook - enforces todo completion
 cat > "$CLAUDE_CONFIG_DIR/hooks/stop-continuation.sh" << 'HOOK_EOF'
 #!/bin/bash
-# Sisyphus Stop Continuation Hook
+# oh-my-claudecode Stop Continuation Hook
 # Checks for incomplete todos and injects continuation prompt
 # Ported from oh-my-opencode's todo-continuation-enforcer
 
@@ -1154,11 +1216,11 @@ chmod +x "$CLAUDE_CONFIG_DIR/hooks/stop-continuation.sh"
 # Silent auto-update hook - checks and applies updates only if enabled
 cat > "$CLAUDE_CONFIG_DIR/hooks/silent-auto-update.sh" << 'HOOK_EOF'
 #!/bin/bash
-# Sisyphus Silent Auto-Update Hook
+# oh-my-claudecode Silent Auto-Update Hook
 # Runs completely in the background to check for and apply updates.
 #
 # SECURITY: This hook only runs if the user has explicitly enabled
-# silent auto-updates in ~/.claude/.sisyphus-config.json
+# silent auto-updates in ~/.claude/.omc-config.json
 #
 # This hook is designed to be called on UserPromptSubmit events
 # but runs asynchronously so it doesn't block the user experience.
@@ -1170,10 +1232,10 @@ INPUT=$(cat)
 # The actual update check happens in the background
 (
   # Configuration
-  CONFIG_FILE="$HOME/.claude/.sisyphus-config.json"
-  VERSION_FILE="$HOME/.claude/.sisyphus-version.json"
-  STATE_FILE="$HOME/.claude/.sisyphus-silent-update.json"
-  LOG_FILE="$HOME/.claude/.sisyphus-update.log"
+  CONFIG_FILE="$HOME/.claude/.omc-config.json"
+  VERSION_FILE="$HOME/.claude/.omc-version.json"
+  STATE_FILE="$HOME/.claude/.omc-silent-update.json"
+  LOG_FILE="$HOME/.claude/.omc-update.log"
   CHECK_INTERVAL_HOURS=24
   REPO_URL="https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main"
 
@@ -1333,7 +1395,7 @@ EOF
   }
 
   # Lock file management for concurrent install protection
-  LOCK_FILE="$HOME/.claude/.sisyphus-update.lock"
+  LOCK_FILE="$HOME/.claude/.omc-update.lock"
   LOCK_TIMEOUT=300  # 5 minutes - stale lock threshold
 
   acquire_lock() {
@@ -1418,7 +1480,7 @@ chmod +x "$CLAUDE_CONFIG_DIR/hooks/silent-auto-update.sh"
 
 echo -e "${GREEN}✓ Installed 3 hook scripts${NC}"
 
-echo -e "${BLUE}[7/8]${NC} Configuring hooks in settings.json..."
+echo -e "${BLUE}[6/6]${NC} Configuring hooks in settings.json..."
 
 # Backup existing settings if present
 SETTINGS_FILE="$CLAUDE_CONFIG_DIR/settings.json"
@@ -1430,7 +1492,14 @@ fi
 if command -v jq &> /dev/null; then
   # Use jq if available for proper JSON handling
   if [ -f "$SETTINGS_FILE" ]; then
-    EXISTING=$(cat "$SETTINGS_FILE")
+    # Validate existing JSON first
+    if ! jq empty "$SETTINGS_FILE" 2>/dev/null; then
+      echo -e "${YELLOW}⚠ Warning: settings.json is malformed. Creating backup and replacing.${NC}"
+      cp "$SETTINGS_FILE" "$SETTINGS_FILE.malformed.bak"
+      EXISTING='{}'
+    else
+      EXISTING=$(cat "$SETTINGS_FILE")
+    fi
   else
     EXISTING='{}'
   fi
@@ -1466,10 +1535,18 @@ if command -v jq &> /dev/null; then
   }'
 
   # Merge: add hooks if not present
-  echo "$EXISTING" | jq --argjson hooks "$HOOKS_CONFIG" '
+  RESULT=$(echo "$EXISTING" | jq --argjson hooks "$HOOKS_CONFIG" '
     if .hooks then . else . + $hooks end
-  ' > "$SETTINGS_FILE"
-  echo -e "${GREEN}✓ Hooks configured in settings.json${NC}"
+  ' 2>/dev/null)
+
+  if [ $? -eq 0 ] && [ -n "$RESULT" ]; then
+    echo "$RESULT" > "$SETTINGS_FILE"
+    echo -e "${GREEN}✓ Hooks configured in settings.json${NC}"
+  else
+    echo -e "${YELLOW}⚠ Could not merge hooks. Creating fresh settings.json${NC}"
+    echo "$HOOKS_CONFIG" > "$SETTINGS_FILE"
+    echo -e "${GREEN}✓ Created new settings.json with hooks${NC}"
+  fi
 else
   # Fallback without jq: try to merge or create
   if [ ! -f "$SETTINGS_FILE" ]; then
@@ -1536,9 +1613,7 @@ SETTINGS_EOF
   fi
 fi
 
-echo -e "${BLUE}[8/8]${NC} Creating CLAUDE.md with Sisyphus system prompt..."
-
-# Only create if it doesn't exist in home directory
+# Only create CLAUDE.md if it doesn't exist in home directory
 if [ ! -f "$HOME/CLAUDE.md" ]; then
     cat > "$CLAUDE_CONFIG_DIR/CLAUDE.md" << 'CLAUDEMD_EOF'
 # Sisyphus Multi-Agent System
@@ -1633,52 +1708,52 @@ Use the Task tool to delegate to specialized agents:
 
 | Agent | Model | Purpose | When to Use |
 |-------|-------|---------|-------------|
-| `oracle` | Opus | Architecture & debugging | Complex problems, root cause analysis |
-| `librarian` | Sonnet | Documentation & research | Finding docs, understanding code |
+| `architect` | Opus | Architecture & debugging | Complex problems, root cause analysis |
+| `researcher` | Sonnet | Documentation & research | Finding docs, understanding code |
 | `explore` | Haiku | Fast search | Quick file/pattern searches |
-| `frontend-engineer` | Sonnet | UI/UX | Component design, styling |
-| `document-writer` | Haiku | Documentation | README, API docs, comments |
-| `multimodal-looker` | Sonnet | Visual analysis | Screenshots, diagrams |
-| `momus` | Opus | Plan review | Critical evaluation of plans |
-| `metis` | Opus | Pre-planning | Hidden requirements, risk analysis |
-| `sisyphus-junior` | Sonnet | Focused execution | Direct task implementation |
-| `prometheus` | Opus | Strategic planning | Creating comprehensive work plans |
+| `designer` | Sonnet | UI/UX | Component design, styling |
+| `writer` | Haiku | Documentation | README, API docs, comments |
+| `vision` | Sonnet | Visual analysis | Screenshots, diagrams |
+| `critic` | Opus | Plan review | Critical evaluation of plans |
+| `analyst` | Opus | Pre-planning | Hidden requirements, risk analysis |
+| `executor` | Sonnet | Focused execution | Direct task implementation |
+| `planner` | Opus | Strategic planning | Creating comprehensive work plans |
 
 ## Slash Commands
 
 | Command | Description |
 |---------|-------------|
-| `/sisyphus <task>` | Activate Sisyphus multi-agent orchestration |
-| `/sisyphus-default` | Set Sisyphus as your default mode |
+| `/orchestrate <task>` | Activate OMC multi-agent orchestration |
+| `/omc-default` | Configure OMC for current project (./.claude/CLAUDE.md) |
+| `/omc-default-global` | Configure OMC globally (~/.claude/CLAUDE.md) |
 | `/ultrawork <task>` | Maximum performance mode with parallel agents |
 | `/deepsearch <query>` | Thorough codebase search |
 | `/analyze <target>` | Deep analysis and investigation |
-| `/plan <description>` | Start planning session with Prometheus |
-| `/review [plan-path]` | Review a plan with Momus |
-| `/prometheus <task>` | Strategic planning with interview workflow |
-| `/orchestrator <task>` | Complex multi-step task coordination |
-| `/ralph-loop <task>` | Self-referential loop until task completion |
+| `/plan <description>` | Start planning session with Planner |
+| `/review [plan-path]` | Review a plan with Critic |
+| `/planner <task>` | Strategic planning with interview workflow |
+| `/ralph <task>` | Self-referential loop until task completion |
 | `/cancel-ralph` | Cancel active Ralph Loop |
-| `/update` | Check for and install updates |
 
 ## Planning Workflow
 
 1. Use `/plan` to start a planning session
-2. Prometheus will interview you about requirements
+2. Planner will interview you about requirements
 3. Say "Create the plan" when ready
-4. Use `/review` to have Momus evaluate the plan
-5. Execute the plan with `/sisyphus`
+4. Use `/review` to have Critic evaluate the plan
+5. Execute the plan with `/orchestrate`
 
 ## Orchestration Principles
 
-1. **Delegate Wisely**: Use subagents for specialized tasks
+1. **ALWAYS Delegate**: Use subagents for ALL substantive work. Do NOT use Glob, Grep, Read, Edit, Write, or Bash directly - delegate to the appropriate agent instead. Only use tools directly for trivial operations (e.g., checking a single file you just edited).
 2. **Parallelize**: Launch multiple subagents concurrently when tasks are independent
 3. **Persist**: Continue until ALL tasks are complete
 4. **Verify**: Check your todo list before declaring completion
-5. **Plan First**: For complex tasks, use Prometheus to create a plan
+5. **Plan First**: For complex tasks, use Planner to create a plan
 
 ## Critical Rules
 
+- **DELEGATE, DON'T DO**: Your role is orchestration. Spawn agents for searches, edits, analysis, and implementation. Only touch tools directly when absolutely necessary.
 - NEVER stop with incomplete work
 - ALWAYS verify task completion before finishing
 - Use parallel execution when possible for speed
@@ -1733,8 +1808,8 @@ else
 fi
 
 # Save version metadata for auto-update system
-VERSION="1.11.0"
-VERSION_FILE="$CLAUDE_CONFIG_DIR/.sisyphus-version.json"
+VERSION="2.0.6"
+VERSION_FILE="$CLAUDE_CONFIG_DIR/.omc-version.json"
 
 cat > "$VERSION_FILE" << VERSION_EOF
 {
@@ -1748,7 +1823,7 @@ echo -e "${GREEN}✓ Saved version metadata${NC}"
 
 echo ""
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         Installation Complete!                            ║${NC}"
+echo -e "${GREEN}║         oh-my-claudecode Installation Complete!           ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "Installed to: ${BLUE}$CLAUDE_CONFIG_DIR${NC}"
@@ -1758,7 +1833,8 @@ echo "  claude                        # Start Claude Code normally"
 echo ""
 echo -e "${YELLOW}Slash Commands:${NC}"
 echo "  /sisyphus <task>              # Activate Sisyphus orchestration mode"
-echo "  /sisyphus-default             # Set Sisyphus as default behavior"
+echo "  /omc-default                  # Configure for current project"
+echo "  /omc-default-global           # Configure globally"
 echo "  /ultrawork <task>             # Maximum performance mode"
 echo "  /deepsearch <query>           # Thorough codebase search"
 echo "  /analyze <target>             # Deep analysis mode"
@@ -1776,11 +1852,14 @@ echo "  momus               - Plan review (Opus)"
 echo "  metis               - Pre-planning analysis (Opus)"
 echo "  sisyphus-junior     - Focused execution (Sonnet)"
 echo "  prometheus          - Strategic planning (Opus)"
+echo "  qa-tester           - CLI/service testing with tmux (Sonnet)"
 echo ""
-echo -e "${YELLOW}Available Skills (via Skill tool):${NC}"
-echo "  ultrawork           - Maximum performance mode"
-echo "  git-master          - Git commit, rebase, and history expert"
-echo "  frontend-ui-ux      - Designer-developer for stunning UI/UX"
+echo -e "${YELLOW}Smart Model Routing (Tiered Variants):${NC}"
+echo "  oracle-low, oracle-medium          - Quick to moderate analysis"
+echo "  sisyphus-junior-low, -high         - Simple to complex execution"
+echo "  librarian-low                      - Quick doc lookups"
+echo "  explore-medium                     - Thorough codebase search"
+echo "  frontend-engineer-low, -high       - Simple to complex UI work"
 echo ""
 echo -e "${YELLOW}Hooks:${NC}"
 echo "  Configure hooks via /hooks command in Claude Code"
@@ -1791,8 +1870,13 @@ echo "  /update                       # Check for and install updates"
 echo "  # Or run this install script again:"
 echo "  curl -fsSL https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claude-sisyphus/main/scripts/install.sh | bash"
 echo ""
+echo -e "${YELLOW}After Updates:${NC}"
+echo "  Run '/omc-default' (project) or '/omc-default-global' (global)"
+echo "  to download the latest CLAUDE.md configuration."
+echo "  This ensures you get the newest features and agent behaviors."
+echo ""
 echo -e "${BLUE}Quick Start:${NC}"
 echo "  1. Run 'claude' to start Claude Code"
-echo "  2. Type '/sisyphus-default' to enable Sisyphus permanently"
+echo "  2. Type '/omc-default' for project config or '/omc-default-global' for global"
 echo "  3. Or use '/sisyphus <task>' for one-time activation"
 echo ""

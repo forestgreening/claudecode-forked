@@ -15,19 +15,19 @@ export interface AgentConfig {
 export interface PluginConfig {
   // Agent model overrides
   agents?: {
-    sisyphus?: { model?: string };
-    oracle?: { model?: string; enabled?: boolean };
-    librarian?: { model?: string };
+    omc?: { model?: string };
+    architect?: { model?: string; enabled?: boolean };
+    researcher?: { model?: string };
     explore?: { model?: string };
     frontendEngineer?: { model?: string; enabled?: boolean };
     documentWriter?: { model?: string; enabled?: boolean };
     multimodalLooker?: { model?: string; enabled?: boolean };
     // New agents from oh-my-opencode
-    momus?: { model?: string; enabled?: boolean };
-    metis?: { model?: string; enabled?: boolean };
+    critic?: { model?: string; enabled?: boolean };
+    analyst?: { model?: string; enabled?: boolean };
     orchestratorSisyphus?: { model?: string; enabled?: boolean };
     sisyphusJunior?: { model?: string; enabled?: boolean };
-    prometheus?: { model?: string; enabled?: boolean };
+    planner?: { model?: string; enabled?: boolean };
   };
 
   // Feature toggles
@@ -60,6 +60,33 @@ export interface PluginConfig {
     search?: string[];
     analyze?: string[];
     ultrathink?: string[];
+  };
+
+  // Intelligent model routing configuration
+  routing?: {
+    /** Enable intelligent model routing */
+    enabled?: boolean;
+    /** Default tier when no rules match */
+    defaultTier?: 'LOW' | 'MEDIUM' | 'HIGH';
+    /** Enable automatic escalation on failure */
+    escalationEnabled?: boolean;
+    /** Maximum escalation attempts */
+    maxEscalations?: number;
+    /** Model mapping per tier */
+    tierModels?: {
+      LOW?: string;
+      MEDIUM?: string;
+      HIGH?: string;
+    };
+    /** Agent-specific tier overrides */
+    agentOverrides?: Record<string, {
+      tier: 'LOW' | 'MEDIUM' | 'HIGH';
+      reason: string;
+    }>;
+    /** Keywords that force escalation to higher tier */
+    escalationKeywords?: string[];
+    /** Keywords that suggest lower tier */
+    simplificationKeywords?: string[];
   };
 }
 

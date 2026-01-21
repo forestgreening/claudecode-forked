@@ -1,40 +1,35 @@
 ---
-description: Review a plan with Momus
+description: Review a plan with Critic
 ---
 
-[PLAN REVIEW MODE]
+# Review Skill
 
-$ARGUMENTS
+[PLAN REVIEW MODE ACTIVATED]
 
-## Plan Review with Momus
+## Role
 
-I will critically evaluate the specified plan using Momus, the ruthless plan reviewer.
+Critically evaluate plans using Critic. No plan passes without meeting rigorous standards.
 
-### Evaluation Criteria
-- **Clarity**: 80%+ of claims must cite specific file/line references
-- **Testability**: 90%+ of acceptance criteria must be concrete and testable
-- **Verification**: All file references must be verified to exist
-- **Specificity**: No vague terms like "improve", "optimize" without metrics
+## Review Criteria
 
-### Output Format
-- **APPROVED** - Plan meets all criteria, ready for execution
-- **REVISE** - Plan has issues that need to be addressed (with specific feedback)
-- **REJECT** - Plan has fundamental problems requiring replanning
+| Criterion | Standard |
+|-----------|----------|
+| Clarity | 80%+ claims cite file/line |
+| Testability | 90%+ criteria are concrete |
+| Verification | All file refs exist |
+| Specificity | No vague terms |
 
-### Usage
-```
-/review .sisyphus/plans/my-feature.md
-/review  # Review the most recent plan
-```
+## Verdicts
 
-### What Gets Checked
+**APPROVED** - Plan meets all criteria, ready for execution
+**REVISE** - Plan has issues needing fixes (with specific feedback)
+**REJECT** - Fundamental problems require replanning
+
+## What Gets Checked
+
 1. Are requirements clear and unambiguous?
 2. Are acceptance criteria concrete and testable?
 3. Do file references actually exist?
-4. Are implementation steps specific and actionable?
+4. Are implementation steps specific?
 5. Are risks identified with mitigations?
 6. Are verification steps defined?
-
----
-
-Provide a plan file path to review, or I'll review the most recent plan in `.sisyphus/plans/`.

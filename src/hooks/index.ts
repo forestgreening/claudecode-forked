@@ -25,9 +25,62 @@ export {
   readRalphState,
   writeRalphState,
   clearRalphState,
+  // PRD Integration
+  hasPrd,
+  getPrdCompletionStatus,
+  getRalphContext,
+  setCurrentStory,
+  enablePrdMode,
+  recordStoryProgress,
+  recordPattern,
+  shouldCompleteByPrd,
   type RalphLoopState,
-  type RalphLoopHook
+  type RalphLoopHook,
+  type PRD,
+  type PRDStatus,
+  type UserStory
 } from './ralph-loop/index.js';
+
+export {
+  // Ralph PRD (Structured Task Tracking)
+  readPrd,
+  writePrd,
+  findPrdPath,
+  getPrdStatus,
+  markStoryComplete,
+  markStoryIncomplete,
+  getStory,
+  getNextStory,
+  createPrd,
+  createSimplePrd,
+  initPrd,
+  formatPrdStatus,
+  formatStory,
+  formatPrd,
+  formatNextStoryPrompt,
+  PRD_FILENAME,
+  type UserStory as PrdUserStory
+} from './ralph-prd/index.js';
+
+export {
+  // Ralph Progress (Memory Persistence)
+  readProgress,
+  readProgressRaw,
+  parseProgress,
+  initProgress,
+  appendProgress,
+  addPattern,
+  getPatterns,
+  getRecentLearnings,
+  formatPatternsForContext,
+  formatProgressForContext,
+  formatLearningsForContext,
+  getProgressContext,
+  PROGRESS_FILENAME,
+  type ProgressEntry,
+  type CodebasePattern,
+  type ProgressLog
+} from './ralph-progress/index.js';
 
 export {
   // Todo Continuation
@@ -112,7 +165,7 @@ export {
 } from './rules-injector/index.js';
 
 export {
-  // Sisyphus Orchestrator
+  // OMC Orchestrator
   createSisyphusOrchestratorHook,
   isAllowedPath,
   isWriteEditTool,
@@ -124,7 +177,7 @@ export {
   checkBoulderContinuation,
   processOrchestratorPreTool,
   processOrchestratorPostTool,
-  HOOK_NAME as SISYPHUS_ORCHESTRATOR_HOOK_NAME,
+  HOOK_NAME as OMC_ORCHESTRATOR_HOOK_NAME,
   ALLOWED_PATH_PREFIX,
   WRITE_EDIT_TOOLS,
   DIRECT_WORK_REMINDER,
@@ -134,7 +187,7 @@ export {
   SINGLE_TASK_DIRECTIVE,
   type ToolExecuteInput as OrchestratorToolInput,
   type ToolExecuteOutput as OrchestratorToolOutput
-} from './sisyphus-orchestrator/index.js';
+} from './omc-orchestrator/index.js';
 
 export {
   // Auto Slash Command
@@ -212,17 +265,12 @@ export {
   resetSessionTokenEstimate,
   DEFAULT_THRESHOLD as PREEMPTIVE_DEFAULT_THRESHOLD,
   CRITICAL_THRESHOLD,
-  MIN_TOKENS_FOR_COMPACTION,
   COMPACTION_COOLDOWN_MS,
   MAX_WARNINGS,
   CLAUDE_DEFAULT_CONTEXT_LIMIT,
   CHARS_PER_TOKEN,
   CONTEXT_WARNING_MESSAGE,
   CONTEXT_CRITICAL_MESSAGE,
-  COMPACTION_SUCCESS_MESSAGE,
-  type PreemptiveCompactionState,
-  type TokenInfo,
-  type ModelLimits,
   type ContextUsageResult,
   type PreemptiveCompactionConfig
 } from './preemptive-compaction/index.js';
@@ -325,7 +373,6 @@ export {
   readMessages as readRecoveryMessages,
   readParts as readRecoveryParts,
   RECOVERY_MESSAGES,
-  RECOVERY_RESUME_TEXT,
   PLACEHOLDER_TEXT as RECOVERY_PLACEHOLDER_TEXT,
   type MessageData,
   type RecoveryErrorType,
@@ -343,7 +390,6 @@ export {
   loadAgentUsageState,
   saveAgentUsageState,
   clearAgentUsageState,
-  AGENT_USAGE_STORAGE_DIR,
   TARGET_TOOLS,
   AGENT_TOOLS,
   REMINDER_MESSAGE,
@@ -390,15 +436,116 @@ export {
 } from './plugin-patterns/index.js';
 
 export {
-  // Ralph Verifier (Oracle-verified completion)
+  // Ralph Verifier (Architect-verified completion)
   readVerificationState,
   writeVerificationState,
   clearVerificationState,
   startVerification,
-  recordOracleFeedback,
-  getOracleVerificationPrompt,
-  getOracleRejectionContinuationPrompt,
-  detectOracleApproval,
-  detectOracleRejection,
+  recordArchitectFeedback,
+  getArchitectVerificationPrompt,
+  getArchitectRejectionContinuationPrompt,
+  detectArchitectApproval,
+  detectArchitectRejection,
   type VerificationState
 } from './ralph-verifier/index.js';
+
+export {
+  // UltraQA Loop (QA cycling workflow)
+  readUltraQAState,
+  writeUltraQAState,
+  clearUltraQAState,
+  startUltraQA,
+  recordFailure,
+  completeUltraQA,
+  stopUltraQA,
+  cancelUltraQA,
+  getGoalCommand,
+  formatProgressMessage,
+  type UltraQAState,
+  type UltraQAGoalType,
+  type UltraQAOptions,
+  type UltraQAResult
+} from './ultraqa-loop/index.js';
+
+export {
+  // Notepad (Compaction-Resilient Memory)
+  initNotepad,
+  readNotepad,
+  getPriorityContext,
+  getWorkingMemory,
+  getManualSection,
+  setPriorityContext,
+  addWorkingMemoryEntry,
+  addManualEntry,
+  pruneOldEntries,
+  getNotepadStats,
+  formatNotepadContext,
+  formatFullNotepad,
+  getNotepadPath,
+  DEFAULT_CONFIG as NOTEPAD_DEFAULT_CONFIG,
+  NOTEPAD_FILENAME,
+  PRIORITY_HEADER,
+  WORKING_MEMORY_HEADER,
+  MANUAL_HEADER,
+  type NotepadConfig,
+  type NotepadStats,
+  type PriorityContextResult,
+  type PruneResult
+} from './notepad/index.js';
+
+export {
+  // Learned Skills (Learner)
+  createLearnedSkillsHook,
+  processMessageForSkills,
+  isLearnerEnabled,
+  getAllSkills,
+  clearSkillSession,
+  findMatchingSkills,
+  loadAllSkills,
+  loadSkillById,
+  findSkillFiles,
+  getSkillsDir,
+  ensureSkillsDir,
+  parseSkillFile,
+  generateSkillFrontmatter,
+  validateExtractionRequest,
+  validateSkillMetadata,
+  writeSkill,
+  checkDuplicateTriggers,
+  detectExtractableMoment,
+  shouldPromptExtraction,
+  generateExtractionPrompt,
+  processResponseForDetection,
+  getLastDetection,
+  clearDetectionState,
+  getDetectionStats,
+  getPromotionCandidates,
+  promoteLearning,
+  listPromotableLearnings,
+  loadConfig as loadLearnerConfig,
+  saveConfig as saveLearnerConfig,
+  getConfigValue as getLearnerConfigValue,
+  setConfigValue as setLearnerConfigValue,
+  // Constants
+  USER_SKILLS_DIR,
+  PROJECT_SKILLS_SUBDIR,
+  SKILL_EXTENSION,
+  FEATURE_FLAG_KEY,
+  MAX_SKILL_CONTENT_LENGTH,
+  MIN_QUALITY_SCORE,
+  MAX_SKILLS_PER_SESSION,
+  // Types
+  type SkillMetadata,
+  type LearnedSkill,
+  type SkillFileCandidate,
+  type QualityValidation,
+  type SkillExtractionRequest,
+  type InjectedSkillsData,
+  type HookContext as SkillHookContext,
+  type DetectionResult,
+  type DetectionConfig,
+  type PromotionCandidate,
+  type LearnerConfig,
+  type WriteSkillResult,
+  type SkillParseResult
+} from './learner/index.js';
