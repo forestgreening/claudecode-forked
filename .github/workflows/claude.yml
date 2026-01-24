@@ -40,6 +40,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -50,16 +51,17 @@ jobs:
       - name: Run Claude Code Action
         uses: anthropics/claude-code-action@v1
         with:
-          api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--model claude-sonnet-4-5-20250929"
 
           # Custom system prompt for this repo
           prompt: |
-            You are the AI assistant for oh-my-claude-sisyphus, a Claude Code multi-agent orchestration plugin.
+            You are the AI assistant for oh-my-claudecode, a Claude Code multi-agent orchestration plugin.
 
             Repository context:
-            - This is a Claude Code plugin with 19 specialized agents and 11 slash commands
-            - Key features: ultrawork mode, chillwork mode, deepinit, prometheus planning, ralph-loop
-            - Installation: /plugin marketplace add Yeachan-Heo/oh-my-claude-sisyphus
+            - This is a Claude Code plugin with 27 specialized agents and 26 skills
+            - Key features: ultrawork mode, chillwork mode, deepinit, planner, ralph-loop
+            - Installation: /plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode
 
             When responding to issues:
             1. Be helpful and welcoming to new users
