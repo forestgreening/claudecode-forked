@@ -10,6 +10,8 @@
 
 import * as path from 'path';
 import { execSync } from 'child_process';
+import * as os from 'os';
+import { existsSync, readFileSync } from 'fs';
 import {
   HOOK_NAME,
   ALLOWED_PATH_PREFIX,
@@ -35,6 +37,34 @@ import { logAuditEntry } from './audit.js';
 // Re-export constants
 export * from './constants.js';
 
+export type EnforcementLevel = 'off' | 'warn' | 'strict';
+
+/**
+ * Read enforcement level from config
+ * Checks: .omc/config.json → ~/.claude/.omc-config.json → default (warn)
+ */
+function getEnforcementLevel(directory: string): EnforcementLevel {
+  const localConfig = path.join(directory, '.omc', 'config.json');
+  const globalConfig = path.join(os.homedir(), '.claude', '.omc-config.json');
+
+  for (const configPath of [localConfig, globalConfig]) {
+    if (existsSync(configPath)) {
+      try {
+        const content = readFileSync(configPath, 'utf-8');
+        const config = JSON.parse(content);
+        const level = config.delegationEnforcementLevel || config.enforcementLevel;
+        if (['off', 'warn', 'strict'].includes(level)) {
+          return level as EnforcementLevel;
+        }
+      } catch {
+        // Continue to next config
+      }
+    }
+  }
+
+  return 'warn'; // Default
+}
+
 /**
  * Input for tool execution hooks
  */
@@ -51,6 +81,7 @@ export interface ToolExecuteInput {
 export interface ToolExecuteOutput {
   continue: boolean;
   message?: string;
+  reason?: string;
   modifiedOutput?: string;
 }
 
@@ -261,11 +292,41 @@ function processRememberTags(output: string, directory: string): void {
 }
 
 /**
+ * Suggest agent based on file extension
+ */
+function suggestAgentForFile(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+
+  const suggestions: Record<string, string> = {
+    '.ts': 'executor-low (simple) or executor (complex)',
+    '.tsx': 'designer-low (simple) or designer (complex UI)',
+    '.js': 'executor-low',
+    '.jsx': 'designer-low',
+    '.py': 'executor-low (simple) or executor (complex)',
+    '.vue': 'designer',
+    '.svelte': 'designer',
+    '.css': 'designer-low',
+    '.scss': 'designer-low',
+    '.md': 'writer (documentation)',
+    '.json': 'executor-low',
+  };
+
+  return suggestions[ext] || 'executor';
+}
+
+/**
  * Process pre-tool-use hook for orchestrator
  * Returns warning message if orchestrator tries to modify non-allowed paths
  */
 export function processOrchestratorPreTool(input: ToolExecuteInput): ToolExecuteOutput {
   const { toolName, toolInput, sessionId } = input;
+  const directory = input.directory || process.cwd();
+  const enforcementLevel = getEnforcementLevel(directory);
+
+  // Early exit if enforcement is off
+  if (enforcementLevel === 'off') {
+    return { continue: true };
+  }
 
   // Only check write/edit tools
   if (!isWriteEditTool(toolName)) {
@@ -290,23 +351,35 @@ export function processOrchestratorPreTool(input: ToolExecuteInput): ToolExecute
     return { continue: true };
   }
 
-  // Log warned operation
+  // Log warned/blocked operation
   const isSource = isSourceFile(filePath);
   logAuditEntry({
     tool: toolName,
     filePath,
-    decision: 'warned',
+    decision: enforcementLevel === 'strict' ? 'blocked' : 'warned',
     reason: isSource ? 'source_file' : 'other',
+    enforcementLevel,
     sessionId,
   });
 
-  // Inject warning for non-allowed path modifications
-  const warning = ORCHESTRATOR_DELEGATION_REQUIRED.replace('$FILE_PATH', filePath);
+  // Build warning with agent suggestion
+  const agentSuggestion = suggestAgentForFile(filePath);
+  const warning = ORCHESTRATOR_DELEGATION_REQUIRED.replace('$FILE_PATH', filePath) +
+    `\n\nSuggested agent: ${agentSuggestion}`;
 
-  return {
-    continue: true,
-    message: warning,
-  };
+  // Block if strict mode, warn otherwise
+  if (enforcementLevel === 'strict') {
+    return {
+      continue: false,
+      reason: 'DELEGATION_REQUIRED',
+      message: warning,
+    };
+  } else {
+    return {
+      continue: true,
+      message: warning,
+    };
+  }
 }
 
 /**
