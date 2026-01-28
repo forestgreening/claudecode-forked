@@ -41,6 +41,7 @@ import {
   isAutopilotActive
 } from '../autopilot/index.js';
 import { checkAutopilot } from '../autopilot/enforcement.js';
+import { isRalfreshActive, processRalfreshLoop } from '../ralfresh/index.js';
 
 export interface PersistentModeResult {
   /** Whether to block the stop event */
@@ -48,7 +49,7 @@ export interface PersistentModeResult {
   /** Message to inject into context */
   message: string;
   /** Which mode triggered the block */
-  mode: 'ralph' | 'ultrawork' | 'todo-continuation' | 'autopilot' | 'none';
+  mode: 'ralph' | 'ultrawork' | 'todo-continuation' | 'autopilot' | 'ralfresh' | 'none';
   /** Additional metadata */
   metadata?: {
     todoCount?: number;
@@ -453,6 +454,23 @@ export async function checkPersistentModes(
   // Note: stopContext already checked above, but pass it for consistency
   const todoResult = await checkIncompleteTodos(sessionId, workingDir, stopContext);
   const hasIncompleteTodos = todoResult.count > 0;
+
+  // Priority 0.5: Ralfresh (ultimate persistence - above all other modes)
+  if (isRalfreshActive(workingDir)) {
+    const ralfreshResult = await processRalfreshLoop(sessionId, workingDir);
+    if (ralfreshResult?.shouldBlock) {
+      return {
+        shouldBlock: true,
+        message: ralfreshResult.message,
+        mode: 'ralfresh',
+        metadata: {
+          iteration: ralfreshResult.metadata?.iteration,
+          maxIterations: ralfreshResult.metadata?.maxIterations,
+          phase: ralfreshResult.phase
+        }
+      };
+    }
+  }
 
   // Priority 1: Ralph (explicit loop mode)
   const ralphResult = await checkRalphLoop(sessionId, workingDir);

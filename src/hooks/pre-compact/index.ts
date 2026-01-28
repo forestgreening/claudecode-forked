@@ -34,6 +34,7 @@ export interface CompactCheckpoint {
     ralph?: { iteration: number; prompt: string };
     ultrawork?: { original_prompt: string };
     swarm?: { session_id: string; task_count: number };
+    ralfresh?: { iteration: number; phase: string; prompt: string; notepadName: string };
   };
   todo_summary: {
     pending: number;
@@ -186,6 +187,24 @@ export function saveModeSummary(directory: string): Record<string, unknown> {
     }
   }
 
+  // Check ralfresh
+  const ralfreshPath = join(stateDir, 'ralfresh-state.json');
+  if (existsSync(ralfreshPath)) {
+    try {
+      const ralfreshState = JSON.parse(readFileSync(ralfreshPath, 'utf-8'));
+      if (ralfreshState.active) {
+        modes.ralfresh = {
+          iteration: ralfreshState.iteration || 1,
+          phase: ralfreshState.phase || 'unknown',
+          prompt: ralfreshState.prompt || '',
+          notepadName: ralfreshState.notepadName || ''
+        };
+      }
+    } catch (error) {
+      console.error('[PreCompact] Error reading ralfresh state:', error);
+    }
+  }
+
   return modes;
 }
 
@@ -251,6 +270,13 @@ export function formatCompactSummary(checkpoint: CompactCheckpoint): string {
     if (checkpoint.active_modes.swarm) {
       const swarm = checkpoint.active_modes.swarm;
       lines.push(`- **Swarm** (Session: ${swarm.session_id}, Tasks: ${swarm.task_count})`);
+    }
+
+    if (checkpoint.active_modes.ralfresh) {
+      const rf = checkpoint.active_modes.ralfresh;
+      lines.push(`- **Ralfresh** (Iteration: ${rf.iteration}, Phase: ${rf.phase})`);
+      lines.push(`  Prompt: ${rf.prompt}`);
+      lines.push(`  Notepad: ${rf.notepadName}`);
     }
 
     lines.push('');

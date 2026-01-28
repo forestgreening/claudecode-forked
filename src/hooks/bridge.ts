@@ -26,6 +26,7 @@ import {
 import { checkIncompleteTodos, StopContext } from './todo-continuation/index.js';
 import { checkPersistentModes, createHookOutput } from './persistent-mode/index.js';
 import { activateUltrawork, readUltraworkState } from './ultrawork/index.js';
+import { initRalfresh, readRalfreshState } from './ralfresh/index.js';
 import {
   readAutopilotState,
   isAutopilotActive,
@@ -39,7 +40,8 @@ import {
   SEARCH_MESSAGE,
   ANALYZE_MESSAGE,
   TODO_CONTINUATION_PROMPT,
-  RALPH_MESSAGE
+  RALPH_MESSAGE,
+  RALFRESH_MESSAGE
 } from '../installer/hooks.js';
 
 // New async hook imports
@@ -173,6 +175,25 @@ function processKeywordDetector(input: HookInput): HookOutput {
   const hasUltrathink = keywords.some(k => k.type === 'ultrathink');
   const hasSearch = keywords.some(k => k.type === 'search');
   const hasAnalyze = keywords.some(k => k.type === 'analyze');
+
+  const hasRalfresh = keywords.some(k => k.type === 'ralfresh');
+
+  if (hasRalfresh) {
+    const directory = input.directory || process.cwd();
+    const state = initRalfresh(directory, promptText, input.sessionId);
+
+    if (!state) {
+      return {
+        continue: true,
+        message: `[RALFRESH MODE BLOCKED] Cannot start ralfresh - another exclusive mode is active. Use /oh-my-claudecode:cancel first.`
+      };
+    }
+
+    return {
+      continue: true,
+      message: RALFRESH_MESSAGE
+    };
+  }
 
   if (hasRalph) {
     // Activate ralph state which also auto-activates ultrawork
@@ -378,6 +399,27 @@ async function processSessionStart(input: HookInput): Promise<HookOutput> {
   const directory = input.directory || process.cwd();
 
   const messages: string[] = [];
+
+  // Check for active ralfresh state
+  const ralfreshState = readRalfreshState(directory);
+  if (ralfreshState?.active) {
+    messages.push(`<session-restore>
+
+[RALFRESH MODE RESTORED]
+
+You have an active ralfresh session from ${ralfreshState.startedAt}.
+Original task: ${ralfreshState.prompt}
+Current iteration: ${ralfreshState.iteration}/${ralfreshState.maxIterations}
+Current phase: ${ralfreshState.phase}
+
+Continue ralfresh execution. Use the ralfresh skill for orchestration guidance.
+
+</session-restore>
+
+---
+
+`);
+  }
 
   // Check for active autopilot state
   const autopilotState = readAutopilotState(directory);

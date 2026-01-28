@@ -75,6 +75,12 @@ const MODE_CONFIGS: Record<ExecutionMode, ModeConfig> = {
     stateFile: 'ecomode-state.json',
     activeProperty: 'active',
     hasGlobalState: true
+  },
+  ralfresh: {
+    name: 'Ralfresh',
+    stateFile: 'ralfresh-state.json',
+    activeProperty: 'active',
+    hasGlobalState: true
   }
 };
 
@@ -84,7 +90,7 @@ export { MODE_CONFIGS };
 /**
  * Modes that are mutually exclusive (cannot run concurrently)
  */
-const EXCLUSIVE_MODES: ExecutionMode[] = ['autopilot', 'ultrapilot', 'swarm', 'pipeline'];
+const EXCLUSIVE_MODES: ExecutionMode[] = ['autopilot', 'ultrapilot', 'swarm', 'pipeline', 'ralfresh'];
 
 /**
  * Get the state directory path

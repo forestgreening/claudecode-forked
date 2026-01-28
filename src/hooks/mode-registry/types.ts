@@ -10,6 +10,7 @@ export type ExecutionMode =
   | 'swarm'
   | 'pipeline'
   | 'ralph'
+  | 'ralfresh'
   | 'ultrawork'
   | 'ultraqa'
   | 'ecomode';

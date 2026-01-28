@@ -7,7 +7,7 @@
  * Ported from oh-my-opencode's keyword-detector hook.
  */
 
-export type KeywordType = 'ralph' | 'autopilot' | 'ultrawork' | 'ultrathink' | 'search' | 'analyze';
+export type KeywordType = 'ralfresh' | 'ralph' | 'autopilot' | 'ultrawork' | 'ultrathink' | 'search' | 'analyze';
 
 export interface DetectedKeyword {
   type: KeywordType;
@@ -42,6 +42,7 @@ const AUTOPILOT_PHRASE_PATTERNS = [
  * Keyword patterns for each mode
  */
 const KEYWORD_PATTERNS: Record<KeywordType, RegExp> = {
+  ralfresh: /\b(ralfresh)\b/i,
   ralph: /\b(ralph|don't stop|must complete|until done)\b/i,
   autopilot: /\b(autopilot|auto pilot|auto-pilot|autonomous|full auto|fullsend)\b/i,
   ultrawork: /\b(ultrawork|ulw)\b/i,
@@ -54,7 +55,7 @@ const KEYWORD_PATTERNS: Record<KeywordType, RegExp> = {
  * Priority order for keyword detection
  * Higher priority keywords take precedence
  */
-const KEYWORD_PRIORITY: KeywordType[] = ['ralph', 'autopilot', 'ultrawork', 'ultrathink', 'search', 'analyze'];
+const KEYWORD_PRIORITY: KeywordType[] = ['ralfresh', 'ralph', 'autopilot', 'ultrawork', 'ultrathink', 'search', 'analyze'];
 
 /**
  * Remove code blocks from text to prevent false positives

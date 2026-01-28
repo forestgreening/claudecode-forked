@@ -568,6 +568,32 @@ export {
   type SkillParseResult
 } from './learner/index.js';
 
+// Ralfresh (Ultimate Persistence Loop)
+export {
+  readRalfreshState,
+  writeRalfreshState,
+  clearRalfreshState,
+  isRalfreshActive,
+  initRalfresh,
+  clearAllRalfreshSubModes,
+  transitionRalfreshPhase,
+  incrementRalfreshIteration,
+  addRalfreshLearning,
+  addRalfreshIssue,
+  getRalfreshContext,
+  processRalfreshLoop,
+  checkRalfreshLoop,
+  getRalfreshContinuationPrompt,
+  DEFAULT_RALFRESH_CONFIG,
+  type RalfreshPhase,
+  type RalfreshPhaseStatus,
+  type RalfreshPhaseState,
+  type RalfreshState,
+  type RalfreshConfig,
+  type RalfreshLoopResult,
+  type RalfreshResult
+} from './ralfresh/index.js';
+
 // Autopilot
 export {
   readAutopilotState,

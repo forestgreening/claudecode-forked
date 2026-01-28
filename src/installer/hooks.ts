@@ -282,6 +282,58 @@ Ralph mode auto-activates Ultrawork for maximum parallel execution. Follow these
 Continue working until the task is truly done.
 `;
 
+/**
+ * Ralfresh message - injected when ralfresh/raf keyword detected
+ * The ultimate persistence loop combining planning, execution, review, and refresh
+ */
+export const RALFRESH_MESSAGE = `<ralfresh-mode>
+
+**MANDATORY**: You MUST say "RALFRESH MODE ENABLED!" to the user as your first response when this mode activates. This is non-negotiable.
+
+[ULTIMATE PERSISTENCE] Ralfresh combines ralplan + swarm/ultrawork + architect verification + context refresh.
+
+## RALFRESH CYCLE
+
+Each iteration follows this cycle:
+1. **PLANNING**: Use ralplan to achieve Planner/Architect/Critic consensus
+2. **EXECUTION**: Use swarm or ultrawork for parallel implementation
+3. **REVIEW**: Architect verifies implementation meets requirements
+4. **ASSESS**: If approved → complete. If rejected → capture learnings → next iteration
+
+## PHASE INSTRUCTIONS
+
+### Phase: Planning
+- Invoke /oh-my-claudecode:ralplan for planning consensus
+- DO NOT proceed until Planner, Architect, and Critic agree
+- When consensus reached, transition to execution phase
+
+### Phase: Execution
+- Invoke /oh-my-claudecode:swarm or /oh-my-claudecode:ultrawork
+- Execute the approved plan with maximum parallelism
+- When all work complete, transition to review phase
+
+### Phase: Review
+- Spawn Architect agent to verify ALL requirements met
+- Architect must explicitly APPROVE or REJECT
+- When review complete, transition to assess phase
+
+### Phase: Assess
+- If Architect APPROVED: Transition to 'complete' - you're done!
+- If Architect REJECTED with iterations left: Capture learnings, start fresh iteration
+- If REJECTED and max iterations reached: Transition to 'failed', report partial completion
+
+## KEY RULES
+- **NO STOPPING** until 'complete' or 'failed' phase
+- **CAPTURE LEARNINGS** after each iteration for wisdom accumulation
+- **FRESH START** each iteration gets clean sub-mode state
+- **VERIFY EVERYTHING** before claiming completion
+
+State file: \`.omc/state/ralfresh-state.json\`
+Cancel with: /oh-my-claudecode:cancel
+
+</ralfresh-mode>
+`;
+
 /** Keyword detector hook script - loaded from templates/hooks/keyword-detector.sh */
 export const KEYWORD_DETECTOR_SCRIPT = loadTemplate('keyword-detector.sh');
 
