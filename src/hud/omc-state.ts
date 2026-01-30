@@ -12,6 +12,7 @@ import type {
   UltraworkStateForHud,
   PrdStateForHud,
 } from './types.js';
+import type { AutopilotStateForHud } from './elements/autopilot.js';
 
 /**
  * Maximum age for state files to be considered "active".
@@ -32,6 +33,18 @@ function isStateFileStale(filePath: string): boolean {
   }
 }
 
+/**
+ * Resolve state file path with fallback from .omc/state/ to .omc/
+ * Returns null if file doesn't exist in either location.
+ */
+function resolveStatePath(directory: string, filename: string): string | null {
+  const newPath = join(directory, '.omc', 'state', filename);
+  const legacyPath = join(directory, '.omc', filename);
+  if (existsSync(newPath)) return newPath;
+  if (existsSync(legacyPath)) return legacyPath;
+  return null;
+}
+
 // ============================================================================
 // Ralph State
 // ============================================================================
@@ -49,9 +62,9 @@ interface RalphLoopState {
  * Returns null if no state file exists or on error.
  */
 export function readRalphStateForHud(directory: string): RalphStateForHud | null {
-  const stateFile = join(directory, '.omc', 'ralph-state.json');
+  const stateFile = resolveStatePath(directory, 'ralph-state.json');
 
-  if (!existsSync(stateFile)) {
+  if (!stateFile) {
     return null;
   }
 
@@ -96,12 +109,12 @@ interface UltraworkState {
 export function readUltraworkStateForHud(
   directory: string
 ): UltraworkStateForHud | null {
-  // Check local state first
-  const localFile = join(directory, '.omc', 'ultrawork-state.json');
+  // Check local state first (with new path fallback)
+  const localFile = resolveStatePath(directory, 'ultrawork-state.json');
   let state: UltraworkState | null = null;
   let stateFile: string | null = null;
 
-  if (existsSync(localFile) && !isStateFileStale(localFile)) {
+  if (localFile && !isStateFileStale(localFile)) {
     try {
       const content = readFileSync(localFile, 'utf-8');
       state = JSON.parse(content) as UltraworkState;
@@ -196,6 +209,60 @@ export function readPrdStateForHud(directory: string): PrdStateForHud | null {
 }
 
 // ============================================================================
+// Autopilot State
+// ============================================================================
+
+interface AutopilotStateFile {
+  active: boolean;
+  phase: string;
+  iteration: number;
+  max_iterations: number;
+  execution?: {
+    tasks_completed?: number;
+    tasks_total?: number;
+    files_created?: string[];
+  };
+}
+
+/**
+ * Read Autopilot state for HUD display.
+ * Returns shape matching AutopilotStateForHud from elements/autopilot.ts.
+ */
+export function readAutopilotStateForHud(directory: string): AutopilotStateForHud | null {
+  const stateFile = resolveStatePath(directory, 'autopilot-state.json');
+
+  if (!stateFile) {
+    return null;
+  }
+
+  // Check for stale state file (abandoned session)
+  if (isStateFileStale(stateFile)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(stateFile, 'utf-8');
+    const state = JSON.parse(content) as AutopilotStateFile;
+
+    if (!state.active) {
+      return null;
+    }
+
+    return {
+      active: state.active,
+      phase: state.phase,
+      iteration: state.iteration,
+      maxIterations: state.max_iterations,
+      tasksCompleted: state.execution?.tasks_completed,
+      tasksTotal: state.execution?.tasks_total,
+      filesCreated: state.execution?.files_created?.length
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================================
 // Combined State Check
 // ============================================================================
 
@@ -205,8 +272,9 @@ export function readPrdStateForHud(directory: string): PrdStateForHud | null {
 export function isAnyModeActive(directory: string): boolean {
   const ralph = readRalphStateForHud(directory);
   const ultrawork = readUltraworkStateForHud(directory);
+  const autopilot = readAutopilotStateForHud(directory);
 
-  return (ralph?.active ?? false) || (ultrawork?.active ?? false);
+  return (ralph?.active ?? false) || (ultrawork?.active ?? false) || (autopilot?.active ?? false);
 }
 
 /**
@@ -214,6 +282,11 @@ export function isAnyModeActive(directory: string): boolean {
  */
 export function getActiveSkills(directory: string): string[] {
   const skills: string[] = [];
+
+  const autopilot = readAutopilotStateForHud(directory);
+  if (autopilot?.active) {
+    skills.push('autopilot');
+  }
 
   const ralph = readRalphStateForHud(directory);
   if (ralph?.active) {
@@ -227,3 +300,6 @@ export function getActiveSkills(directory: string): string[] {
 
   return skills;
 }
+
+// Re-export for convenience
+export type { AutopilotStateForHud } from './elements/autopilot.js';

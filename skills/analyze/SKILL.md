@@ -1,7 +1,6 @@
 ---
 name: analyze
 description: Deep analysis and investigation
-user-invocable: true
 ---
 
 # Deep Analysis Mode
@@ -24,6 +23,23 @@ Conduct thorough analysis of the specified target (code, architecture, issue, bu
    - Trace execution flows
    - Map dependencies and relationships
    - Check for edge cases
+
+   **For Debugging/Bug Analysis (4-Phase Protocol)**
+
+   When analyzing bugs or issues, follow systematic debugging:
+
+   - **Root Cause First** - Never skip to fixes
+     - Read ALL error messages
+     - Reproduce consistently
+     - Document hypothesis before looking at code
+
+   - **Pattern Analysis** - Find working vs broken
+     - Compare with working similar code
+     - Identify the specific delta
+
+   - **3-Failure Circuit Breaker** - If stuck:
+     - After 3 failed hypotheses, question the architecture
+     - The bug may be elsewhere entirely
 
 3. **Synthesize Findings**
    - Root cause (for bugs)

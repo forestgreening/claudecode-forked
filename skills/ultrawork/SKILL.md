@@ -1,7 +1,6 @@
 ---
 name: ultrawork
 description: Activate maximum performance mode with parallel agent orchestration for high-throughput task completion
-user-invocable: true
 ---
 
 # Ultrawork Skill
@@ -91,3 +90,17 @@ Before stopping, verify:
 - [ ] ERRORS: Zero unaddressed errors
 
 **If ANY checkbox is unchecked, CONTINUE WORKING.**
+
+## STATE CLEANUP ON COMPLETION
+
+**IMPORTANT: Delete state files on completion - do NOT just set `active: false`**
+
+When all verification passes and work is complete:
+
+```bash
+# Delete ultrawork state files
+rm -f .omc/state/ultrawork-state.json
+rm -f ~/.claude/ultrawork-state.json
+```
+
+This ensures clean state for future sessions. Stale state files with `active: false` should not be left behind.

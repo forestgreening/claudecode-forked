@@ -8,10 +8,15 @@
  * Adapted from oh-my-opencode's omc-orchestrator hook for shell-based hooks.
  */
 
+import * as path from 'path';
 import { execSync } from 'child_process';
+import * as os from 'os';
+import { existsSync, readFileSync } from 'fs';
 import {
   HOOK_NAME,
   ALLOWED_PATH_PREFIX,
+  ALLOWED_PATH_PATTERNS,
+  WARNED_EXTENSIONS,
   WRITE_EDIT_TOOLS,
   DIRECT_WORK_REMINDER,
   ORCHESTRATOR_DELEGATION_REQUIRED,
@@ -27,9 +32,64 @@ import {
   addWorkingMemoryEntry,
   setPriorityContext,
 } from '../notepad/index.js';
+import { logAuditEntry } from './audit.js';
 
 // Re-export constants
 export * from './constants.js';
+
+export type EnforcementLevel = 'off' | 'warn' | 'strict';
+
+// Config caching (30s TTL)
+let enforcementCache: { level: EnforcementLevel; directory: string; timestamp: number } | null = null;
+const CACHE_TTL_MS = 30_000; // 30 seconds
+
+/**
+ * Clear enforcement level cache (for testing)
+ * @internal
+ */
+export function clearEnforcementCache(): void {
+  enforcementCache = null;
+}
+
+/**
+ * Read enforcement level from config
+ * Checks: .omc/config.json → ~/.claude/.omc-config.json → default (warn)
+ */
+function getEnforcementLevel(directory: string): EnforcementLevel {
+  const now = Date.now();
+
+  // Return cached value if valid
+  if (enforcementCache &&
+      enforcementCache.directory === directory &&
+      (now - enforcementCache.timestamp) < CACHE_TTL_MS) {
+    return enforcementCache.level;
+  }
+
+  const localConfig = path.join(directory, '.omc', 'config.json');
+  const globalConfig = path.join(os.homedir(), '.claude', '.omc-config.json');
+
+  let level: EnforcementLevel = 'warn'; // Default
+
+  for (const configPath of [localConfig, globalConfig]) {
+    if (existsSync(configPath)) {
+      try {
+        const content = readFileSync(configPath, 'utf-8');
+        const config = JSON.parse(content);
+        const configLevel = config.delegationEnforcementLevel ?? config.enforcementLevel;
+        if (['off', 'warn', 'strict'].includes(configLevel)) {
+          level = configLevel as EnforcementLevel;
+          break; // Found valid level, stop searching
+        }
+      } catch {
+        // Continue to next config
+      }
+    }
+  }
+
+  // Update cache
+  enforcementCache = { level, directory, timestamp: now };
+  return level;
+}
 
 /**
  * Input for tool execution hooks
@@ -47,6 +107,7 @@ export interface ToolExecuteInput {
 export interface ToolExecuteOutput {
   continue: boolean;
   message?: string;
+  reason?: string;
   modifiedOutput?: string;
 }
 
@@ -65,7 +126,17 @@ interface GitFileStat {
  */
 export function isAllowedPath(filePath: string): boolean {
   if (!filePath) return true;
-  return filePath.includes(ALLOWED_PATH_PREFIX);
+  // Check against all allowed patterns
+  return ALLOWED_PATH_PATTERNS.some(pattern => pattern.test(filePath));
+}
+
+/**
+ * Check if a file path is a source file that should trigger delegation warning
+ */
+export function isSourceFile(filePath: string): boolean {
+  if (!filePath) return false;
+  const ext = path.extname(filePath).toLowerCase();
+  return WARNED_EXTENSIONS.includes(ext);
 }
 
 /**
@@ -247,11 +318,41 @@ function processRememberTags(output: string, directory: string): void {
 }
 
 /**
+ * Suggest agent based on file extension
+ */
+function suggestAgentForFile(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+
+  const suggestions: Record<string, string> = {
+    '.ts': 'executor-low (simple) or executor (complex)',
+    '.tsx': 'designer-low (simple) or designer (complex UI)',
+    '.js': 'executor-low',
+    '.jsx': 'designer-low',
+    '.py': 'executor-low (simple) or executor (complex)',
+    '.vue': 'designer',
+    '.svelte': 'designer',
+    '.css': 'designer-low',
+    '.scss': 'designer-low',
+    '.md': 'writer (documentation)',
+    '.json': 'executor-low',
+  };
+
+  return suggestions[ext] || 'executor';
+}
+
+/**
  * Process pre-tool-use hook for orchestrator
  * Returns warning message if orchestrator tries to modify non-allowed paths
  */
 export function processOrchestratorPreTool(input: ToolExecuteInput): ToolExecuteOutput {
-  const { toolName, toolInput } = input;
+  const { toolName, toolInput, sessionId } = input;
+  const directory = input.directory || process.cwd();
+  const enforcementLevel = getEnforcementLevel(directory);
+
+  // Early exit if enforcement is off
+  if (enforcementLevel === 'off') {
+    return { continue: true };
+  }
 
   // Only check write/edit tools
   if (!isWriteEditTool(toolName)) {
@@ -263,16 +364,49 @@ export function processOrchestratorPreTool(input: ToolExecuteInput): ToolExecute
 
   // Allow if path is in allowed prefix
   if (!filePath || isAllowedPath(filePath)) {
+    // Log allowed operation
+    if (filePath) {
+      logAuditEntry({
+        tool: toolName,
+        filePath,
+        decision: 'allowed',
+        reason: 'allowed_path',
+        enforcementLevel,
+        sessionId,
+      });
+    }
     return { continue: true };
   }
 
-  // Inject warning for non-allowed path modifications
-  const warning = ORCHESTRATOR_DELEGATION_REQUIRED.replace('$FILE_PATH', filePath);
+  // Log warned/blocked operation
+  const isSource = isSourceFile(filePath);
+  logAuditEntry({
+    tool: toolName,
+    filePath,
+    decision: enforcementLevel === 'strict' ? 'blocked' : 'warned',
+    reason: isSource ? 'source_file' : 'other',
+    enforcementLevel,
+    sessionId,
+  });
 
-  return {
-    continue: true,
-    message: warning,
-  };
+  // Build warning with agent suggestion
+  const agentSuggestion = suggestAgentForFile(filePath);
+  const warning = ORCHESTRATOR_DELEGATION_REQUIRED.replace('$FILE_PATH', filePath) +
+    `\n\nSuggested agent: ${agentSuggestion}`;
+
+  // Block if strict mode, warn otherwise
+  if (enforcementLevel === 'strict') {
+    return {
+      continue: false,
+      reason: 'DELEGATION_REQUIRED',
+      message: warning,
+    };
+  } else {
+    return {
+      continue: true,
+      message: warning,
+    };
+  }
 }
 
 /**

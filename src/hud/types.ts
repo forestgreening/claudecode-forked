@@ -4,6 +4,11 @@
  * Type definitions for the HUD state, configuration, and rendering.
  */
 
+import type { AutopilotStateForHud } from './elements/autopilot.js';
+
+// Re-export for convenience
+export type { AutopilotStateForHud };
+
 // ============================================================================
 // HUD State
 // ============================================================================
@@ -15,6 +20,8 @@ export interface BackgroundTask {
   startedAt: string;
   completedAt?: string;
   status: 'running' | 'completed' | 'failed';
+  startTime?: string; // Alias for compatibility
+  exitCode?: number; // For tracking abnormal termination
 }
 
 export interface OmcHudState {
@@ -92,6 +99,16 @@ export interface SessionHealth {
   durationMinutes: number;
   messageCount: number;
   health: 'healthy' | 'warning' | 'critical';
+
+  // Analytics fields
+  sessionCost?: number;
+  totalTokens?: number;
+  cacheHitRate?: number;
+  topAgents?: Array<{ agent: string; cost: number }>;
+
+  // NEW: Additional analytics fields
+  costPerHour?: number;
+  isEstimated?: boolean;  // True when costs are estimated (always for now)
 }
 
 export interface TranscriptData {
@@ -126,19 +143,25 @@ export interface PrdStateForHud {
   total: number;
 }
 
+
 // ============================================================================
 // Render Context
 // ============================================================================
 
 export interface RateLimits {
-  /** 5-hour rolling window usage percentage (0-100) */
+  /** 5-hour rolling window usage percentage (0-100) - all models combined */
   fiveHourPercent: number;
-  /** Weekly usage percentage (0-100) */
+  /** Weekly usage percentage (0-100) - all models combined */
   weeklyPercent: number;
   /** When the 5-hour limit resets (null if unavailable) */
   fiveHourResetsAt?: Date | null;
   /** When the weekly limit resets (null if unavailable) */
   weeklyResetsAt?: Date | null;
+
+  /** Sonnet-specific weekly usage percentage (0-100), if available from API */
+  sonnetWeeklyPercent?: number;
+  /** Sonnet weekly reset time */
+  sonnetWeeklyResetsAt?: Date | null;
 }
 
 export interface HudRenderContext {
@@ -156,6 +179,9 @@ export interface HudRenderContext {
 
   /** PRD state */
   prd: PrdStateForHud | null;
+
+  /** Autopilot state */
+  autopilot: AutopilotStateForHud | null;
 
   /** Active subagents from transcript */
   activeAgents: ActiveAgent[];
@@ -189,7 +215,7 @@ export interface HudRenderContext {
 // Configuration
 // ============================================================================
 
-export type HudPreset = 'minimal' | 'focused' | 'full' | 'opencode' | 'dense';
+export type HudPreset = 'minimal' | 'focused' | 'full' | 'opencode' | 'dense' | 'analytics';
 
 /**
  * Agent display format options:
@@ -207,6 +233,7 @@ export interface HudElementConfig {
   omcLabel: boolean;
   rateLimits: boolean;  // Show 5h and weekly rate limits
   ralph: boolean;
+  autopilot: boolean;
   prdStory: boolean;
   activeSkills: boolean;
   lastSkill: boolean;
@@ -219,6 +246,9 @@ export interface HudElementConfig {
   permissionStatus: boolean;  // Show pending permission indicator
   thinking: boolean;          // Show extended thinking indicator
   sessionHealth: boolean;     // Show session health/duration
+  useBars: boolean;           // Show visual progress bars instead of/alongside percentages
+  showCache: boolean;         // Show cache hit rate in analytics displays
+  showCost: boolean;          // Show cost/dollar amounts in analytics displays
 }
 
 export interface HudThresholds {
@@ -236,6 +266,7 @@ export interface HudConfig {
   preset: HudPreset;
   elements: HudElementConfig;
   thresholds: HudThresholds;
+  staleTaskThresholdMinutes?: number; // Default 30
 }
 
 export const DEFAULT_HUD_CONFIG: HudConfig = {
@@ -244,6 +275,7 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
     omcLabel: true,
     rateLimits: true,  // Show rate limits by default
     ralph: true,
+    autopilot: true,
     prdStory: true,
     activeSkills: true,
     contextBar: true,
@@ -256,6 +288,9 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
     permissionStatus: false,  // Disabled: heuristic-based, causes false positives
     thinking: true,
     sessionHealth: true,
+    useBars: false,  // Disabled by default for backwards compatibility
+    showCache: true,
+    showCost: true,
   },
   thresholds: {
     contextWarning: 70,
@@ -270,6 +305,7 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     omcLabel: true,
     rateLimits: true,
     ralph: true,
+    autopilot: true,
     prdStory: false,
     activeSkills: true,
     lastSkill: true,
@@ -282,11 +318,36 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     permissionStatus: false,
     thinking: false,
     sessionHealth: false,
+    useBars: false,
+    showCache: false,
+    showCost: false,
+  },
+  analytics: {
+    omcLabel: false,
+    rateLimits: false,
+    ralph: false,
+    autopilot: false,
+    prdStory: false,
+    activeSkills: false,
+    lastSkill: false,
+    contextBar: false,
+    agents: true,
+    agentsFormat: 'codes',
+    agentsMaxLines: 0,
+    backgroundTasks: false,
+    todos: true,
+    permissionStatus: false,
+    thinking: false,
+    sessionHealth: false,
+    useBars: false,
+    showCache: true,
+    showCost: true,
   },
   focused: {
     omcLabel: true,
     rateLimits: true,
     ralph: true,
+    autopilot: true,
     prdStory: true,
     activeSkills: true,
     lastSkill: true,
@@ -299,11 +360,15 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     permissionStatus: false,  // Disabled: heuristic unreliable
     thinking: true,
     sessionHealth: true,
+    useBars: true,
+    showCache: true,
+    showCost: true,
   },
   full: {
     omcLabel: true,
     rateLimits: true,
     ralph: true,
+    autopilot: true,
     prdStory: true,
     activeSkills: true,
     lastSkill: true,
@@ -316,11 +381,15 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     permissionStatus: false,  // Disabled: heuristic unreliable
     thinking: true,
     sessionHealth: true,
+    useBars: true,
+    showCache: true,
+    showCost: true,
   },
   opencode: {
     omcLabel: true,
     rateLimits: false,
     ralph: true,
+    autopilot: true,
     prdStory: false,
     activeSkills: true,
     lastSkill: true,
@@ -333,11 +402,15 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     permissionStatus: false,  // Disabled: heuristic unreliable
     thinking: true,
     sessionHealth: true,
+    useBars: false,
+    showCache: true,
+    showCost: true,
   },
   dense: {
     omcLabel: true,
     rateLimits: true,
     ralph: true,
+    autopilot: true,
     prdStory: true,
     activeSkills: true,
     lastSkill: true,
@@ -350,5 +423,8 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     permissionStatus: false,  // Disabled: heuristic unreliable
     thinking: true,
     sessionHealth: true,
+    useBars: true,
+    showCache: true,
+    showCost: true,
   },
 };

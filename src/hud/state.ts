@@ -10,18 +10,19 @@ import { join } from 'path';
 import { homedir } from 'os';
 import type { OmcHudState, BackgroundTask, HudConfig } from './types.js';
 import { DEFAULT_HUD_CONFIG, PRESET_CONFIGS } from './types.js';
+import { cleanupStaleBackgroundTasks, markOrphanedTasksAsStale } from './background-cleanup.js';
 
 // ============================================================================
 // Path Helpers
 // ============================================================================
 
 /**
- * Get the HUD state file path in the project's .omc directory
+ * Get the HUD state file path in the project's .omc/state directory
  */
 function getLocalStateFilePath(directory?: string): string {
   const baseDir = directory || process.cwd();
-  const omcDir = join(baseDir, '.omc');
-  return join(omcDir, 'hud-state.json');
+  const omcStateDir = join(baseDir, '.omc', 'state');
+  return join(omcStateDir, 'hud-state.json');
 }
 
 /**
@@ -39,13 +40,13 @@ function getConfigFilePath(): string {
 }
 
 /**
- * Ensure the .omc directory exists
+ * Ensure the .omc/state directory exists
  */
 function ensureStateDir(directory?: string): void {
   const baseDir = directory || process.cwd();
-  const omcDir = join(baseDir, '.omc');
-  if (!existsSync(omcDir)) {
-    mkdirSync(omcDir, { recursive: true });
+  const omcStateDir = join(baseDir, '.omc', 'state');
+  if (!existsSync(omcStateDir)) {
+    mkdirSync(omcStateDir, { recursive: true });
   }
 }
 
@@ -74,14 +75,26 @@ function ensureGlobalStateDir(): void {
 // ============================================================================
 
 /**
- * Read HUD state from disk (checks both local and global)
+ * Read HUD state from disk (checks new local, legacy local, then global)
  */
 export function readHudState(directory?: string): OmcHudState | null {
-  // Check local state first
+  // Check new local state first (.omc/state/hud-state.json)
   const localStateFile = getLocalStateFilePath(directory);
   if (existsSync(localStateFile)) {
     try {
       const content = readFileSync(localStateFile, 'utf-8');
+      return JSON.parse(content);
+    } catch {
+      // Fall through to legacy check
+    }
+  }
+
+  // Check legacy local state (.omc/hud-state.json)
+  const baseDir = directory || process.cwd();
+  const legacyStateFile = join(baseDir, '.omc', 'hud-state.json');
+  if (existsSync(legacyStateFile)) {
+    try {
+      const content = readFileSync(legacyStateFile, 'utf-8');
       return JSON.parse(content);
     } catch {
       // Fall through to global check
@@ -224,4 +237,18 @@ export function applyPreset(preset: HudConfig['preset']): HudConfig {
 
   writeHudConfig(newConfig);
   return newConfig;
+}
+
+/**
+ * Initialize HUD state with cleanup of stale/orphaned tasks.
+ * Should be called on HUD startup.
+ */
+export async function initializeHUDState(): Promise<void> {
+  // Clean up stale background tasks from previous sessions
+  const removedStale = await cleanupStaleBackgroundTasks();
+  const markedOrphaned = await markOrphanedTasksAsStale();
+
+  if (removedStale > 0 || markedOrphaned > 0) {
+    console.error(`HUD cleanup: removed ${removedStale} stale tasks, marked ${markedOrphaned} orphaned tasks`);
+  }
 }

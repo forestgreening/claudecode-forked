@@ -14,8 +14,10 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import * as fs from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { homedir } from 'os';
 import {
   loadConfig,
   getConfigPaths,
@@ -33,6 +35,24 @@ import {
   isInstalled,
   getInstallInfo
 } from '../installer/index.js';
+import { statsCommand } from './commands/stats.js';
+import { costCommand } from './commands/cost.js';
+import { sessionsCommand } from './commands/sessions.js';
+import { agentsCommand } from './commands/agents.js';
+import { exportCommand } from './commands/export.js';
+import { cleanupCommand } from './commands/cleanup.js';
+import { backfillCommand } from './commands/backfill.js';
+import {
+  launchTokscaleTUI,
+  isTokscaleCLIAvailable,
+  getInstallInstructions
+} from './utils/tokscale-launcher.js';
+import {
+  waitCommand,
+  waitStatusCommand,
+  waitDaemonCommand,
+  waitDetectCommand
+} from './commands/wait.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -48,10 +68,237 @@ try {
 
 const program = new Command();
 
+// Helper functions for auto-backfill
+async function checkIfBackfillNeeded(): Promise<boolean> {
+  const tokenLogPath = join(homedir(), '.omc', 'state', 'token-tracking.jsonl');
+  try {
+    await fs.access(tokenLogPath);
+    const stats = await fs.stat(tokenLogPath);
+    // Backfill if file is older than 1 hour or very small
+    const ageMs = Date.now() - stats.mtimeMs;
+    return stats.size < 100 || ageMs > 3600000;
+  } catch {
+    return true; // File doesn't exist
+  }
+}
+
+async function runQuickBackfill(silent: boolean = false): Promise<void> {
+  const { BackfillEngine } = await import('../analytics/backfill-engine.js');
+  const engine = new BackfillEngine();
+  const result = await engine.run({ verbose: false });
+  if (result.entriesAdded > 0 && !silent) {
+    console.log(chalk.green(`Backfilled ${result.entriesAdded} entries in ${result.timeElapsed}ms`));
+  }
+}
+
+// Auto-backfill before analytics commands
+async function ensureBackfillDone(): Promise<void> {
+  const shouldBackfill = await checkIfBackfillNeeded();
+  if (shouldBackfill) {
+    await runQuickBackfill(true); // Silent backfill for subcommands
+  }
+}
+
+// Display enhanced banner using gradient-string (loaded dynamically)
+async function displayAnalyticsBanner() {
+  try {
+    // @ts-ignore - gradient-string will be installed during setup
+    const gradient = await import('gradient-string');
+    const banner = gradient.default.pastel.multiline([
+      '╔═══════════════════════════════════════╗',
+      '║   Oh-My-ClaudeCode - Analytics Dashboard   ║',
+      '╚═══════════════════════════════════════╝'
+    ].join('\n'));
+    console.log(banner);
+    console.log('');
+  } catch (error) {
+    // Fallback if gradient-string not installed
+    console.log('╔═══════════════════════════════════════╗');
+    console.log('║   Oh-My-ClaudeCode - Analytics Dashboard   ║');
+    console.log('╚═══════════════════════════════════════╝');
+    console.log('');
+  }
+}
+
+// Default action when running 'omc' with no args - show everything
+async function defaultAction() {
+  await displayAnalyticsBanner();
+
+  // Check if we need to backfill for agent data
+  const shouldAutoBackfill = await checkIfBackfillNeeded();
+  if (shouldAutoBackfill) {
+    console.log(chalk.yellow('First run detected - backfilling agent data...'));
+    await runQuickBackfill();
+  }
+
+  // Show aggregate session stats
+  console.log(chalk.bold('📊 Aggregate Session Statistics'));
+  console.log(chalk.gray('─'.repeat(50)));
+  await statsCommand({ json: false });
+
+  console.log('\n');
+
+  // Show cost breakdown
+  console.log(chalk.bold('💰 Cost Analysis (Monthly)'));
+  console.log(chalk.gray('─'.repeat(50)));
+  await costCommand('monthly', { json: false });
+
+  console.log('\n');
+
+  // Show top agents
+  console.log(chalk.bold('🤖 Top Agents'));
+  console.log(chalk.gray('─'.repeat(50)));
+  await agentsCommand({ json: false, limit: 10 });
+
+  console.log('\n');
+  console.log(chalk.dim('Run with --help to see all available commands'));
+
+  // Show tokscale hint if available
+  const tuiAvailable = await isTokscaleCLIAvailable();
+
+  if (tuiAvailable) {
+    console.log('');
+    console.log(chalk.dim('Tip: Run `omc tui` for an interactive token visualization dashboard'));
+  }
+}
+
 program
-  .name('oh-my-claudecode')
-  .description('Multi-agent orchestration system for Claude Agent SDK')
-  .version(version);
+  .name('omc')
+  .description('Multi-agent orchestration system for Claude Agent SDK with analytics')
+  .version(version)
+  .action(defaultAction);
+
+/**
+ * Analytics Commands
+ */
+
+// Stats command
+program
+  .command('stats')
+  .description('Show aggregate statistics (or specific session with --session)')
+  .option('--json', 'Output as JSON')
+  .option('--session <id>', 'Show stats for specific session (defaults to aggregate)')
+  .action(async (options) => {
+    await ensureBackfillDone();
+    await statsCommand(options);
+  });
+
+// Cost command
+program
+  .command('cost [period]')
+  .description('Generate cost report (period: daily, weekly, monthly)')
+  .option('--json', 'Output as JSON')
+  .action(async (period = 'monthly', options) => {
+    if (!['daily', 'weekly', 'monthly'].includes(period)) {
+      console.error('Invalid period. Use: daily, weekly, or monthly');
+      process.exit(1);
+    }
+    await ensureBackfillDone();
+    await costCommand(period as 'daily' | 'weekly' | 'monthly', options);
+  });
+
+// Sessions command
+program
+  .command('sessions')
+  .description('View session history')
+  .option('--json', 'Output as JSON')
+  .option('--limit <number>', 'Limit number of sessions', '10')
+  .action(async (options) => {
+    await ensureBackfillDone();
+    await sessionsCommand({ ...options, limit: parseInt(options.limit) });
+  });
+
+// Agents command
+program
+  .command('agents')
+  .description('Show agent usage breakdown')
+  .option('--json', 'Output as JSON')
+  .option('--limit <number>', 'Limit number of agents', '10')
+  .action(async (options) => {
+    await ensureBackfillDone();
+    await agentsCommand({ ...options, limit: parseInt(options.limit) });
+  });
+
+// Export command
+program
+  .command('export <type> <format> <output>')
+  .description('Export data (type: cost, sessions, patterns; format: json, csv)')
+  .option('--period <period>', 'Period for cost report (daily, weekly, monthly)', 'monthly')
+  .action((type, format, output, options) => {
+    if (!['cost', 'sessions', 'patterns'].includes(type)) {
+      console.error('Invalid type. Use: cost, sessions, or patterns');
+      process.exit(1);
+    }
+    if (!['json', 'csv'].includes(format)) {
+      console.error('Invalid format. Use: json or csv');
+      process.exit(1);
+    }
+    exportCommand(type as any, format as any, output, options);
+  });
+
+// Cleanup command
+program
+  .command('cleanup')
+  .description('Clean up old logs and orphaned background tasks')
+  .option('--retention <days>', 'Retention period in days', '30')
+  .action(options => {
+    cleanupCommand({ ...options, retention: parseInt(options.retention) });
+  });
+
+// Backfill command (deprecated - auto-backfill runs on every command)
+program
+  .command('backfill')
+  .description('[DEPRECATED] Backfill now runs automatically. Use for manual re-sync only.')
+  .option('--project <path>', 'Filter to specific project path')
+  .option('--from <date>', 'Start date (ISO format: YYYY-MM-DD)')
+  .option('--to <date>', 'End date (ISO format: YYYY-MM-DD)')
+  .option('--dry-run', 'Preview without writing data')
+  .option('--reset', 'Clear deduplication index and re-process all transcripts')
+  .option('--verbose', 'Show detailed progress')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    if (!options.reset && !options.project && !options.from && !options.to) {
+      console.log(chalk.yellow('Note: Backfill now runs automatically with every omc command.'));
+      console.log(chalk.gray('Use --reset to force full re-sync, or --project/--from/--to for filtered backfill.\n'));
+    }
+    await backfillCommand(options);
+  });
+
+// TUI command
+program
+  .command('tui')
+  .description('Launch tokscale interactive TUI for token visualization')
+  .option('--light', 'Use light theme')
+  .option('--models', 'Show models view')
+  .option('--daily', 'Show daily view')
+  .option('--stats', 'Show stats view')
+  .option('--no-claude', 'Show all providers (not just Claude)')
+  .action(async (options) => {
+    const available = await isTokscaleCLIAvailable();
+
+    if (!available) {
+      console.log(chalk.yellow('tokscale is not installed.'));
+      console.log(getInstallInstructions());
+      process.exit(1);
+    }
+
+    const view = options.models ? 'models'
+               : options.daily ? 'daily'
+               : options.stats ? 'stats'
+               : 'overview';
+
+    try {
+      await launchTokscaleTUI({
+        light: options.light,
+        view,
+        claude: options.claude
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red(`Failed to launch TUI: ${message}`));
+      process.exit(1);
+    }
+  });
 
 /**
  * Init command - Initialize configuration
@@ -62,6 +309,9 @@ program
   .option('-g, --global', 'Initialize global user configuration')
   .option('-f, --force', 'Overwrite existing configuration')
   .action(async (options) => {
+    console.log(chalk.yellow('⚠️  DEPRECATED: The init command is deprecated.'));
+    console.log(chalk.gray('Configuration is now managed automatically. Use /oh-my-claudecode:omc-setup instead.\n'));
+
     const paths = getConfigPaths();
     const targetPath = options.global ? paths.user : paths.project;
     const targetDir = dirname(targetPath);
@@ -136,9 +386,6 @@ program
       // Set EXA_API_KEY environment variable for API key
     },
     "context7": {
-      "enabled": true
-    },
-    "grepApp": {
       "enabled": true
     }
   },
@@ -538,6 +785,63 @@ program
       }
       process.exit(1);
     }
+  });
+
+/**
+ * Wait command - Rate limit wait and auto-resume
+ *
+ * Zero learning curve design:
+ * - `omc wait` alone shows status and suggests next action
+ * - `omc wait --start` starts the daemon (shortcut)
+ * - `omc wait --stop` stops the daemon (shortcut)
+ * - Subcommands available for power users
+ */
+const waitCmd = program
+  .command('wait')
+  .description('Rate limit wait and auto-resume (just run "omc wait" to get started)')
+  .option('--json', 'Output as JSON')
+  .option('--start', 'Start the auto-resume daemon')
+  .option('--stop', 'Stop the auto-resume daemon')
+  .action(async (options) => {
+    await waitCommand(options);
+  });
+
+waitCmd
+  .command('status')
+  .description('Show detailed rate limit and daemon status')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    await waitStatusCommand(options);
+  });
+
+waitCmd
+  .command('daemon <action>')
+  .description('Start or stop the auto-resume daemon')
+  .option('-v, --verbose', 'Enable verbose logging')
+  .option('-f, --foreground', 'Run in foreground (blocking)')
+  .option('-i, --interval <seconds>', 'Poll interval in seconds', '60')
+  .action(async (action: string, options) => {
+    if (action !== 'start' && action !== 'stop') {
+      console.error('Invalid action. Use: start or stop');
+      process.exit(1);
+    }
+    await waitDaemonCommand(action as 'start' | 'stop', {
+      verbose: options.verbose,
+      foreground: options.foreground,
+      interval: parseInt(options.interval),
+    });
+  });
+
+waitCmd
+  .command('detect')
+  .description('Scan for blocked Claude Code sessions in tmux')
+  .option('--json', 'Output as JSON')
+  .option('-l, --lines <number>', 'Number of pane lines to analyze', '15')
+  .action(async (options) => {
+    await waitDetectCommand({
+      json: options.json,
+      lines: parseInt(options.lines),
+    });
   });
 
 /**

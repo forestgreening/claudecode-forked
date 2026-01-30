@@ -54,6 +54,8 @@ export interface AgentPromptMetadata {
   avoidWhen?: string[];
   /** Description for dynamic prompt building */
   promptDescription?: string;
+  /** Tools this agent uses (for tool selection guidance) */
+  tools?: string[];
 }
 
 /**
@@ -70,6 +72,8 @@ export interface AgentConfig {
   tools: string[];
   /** Model to use (defaults to sonnet) */
   model?: ModelType;
+  /** Default model for this agent (explicit tier mapping) */
+  defaultModel?: ModelType;
   /** Optional metadata for dynamic prompt generation */
   metadata?: AgentPromptMetadata;
 }

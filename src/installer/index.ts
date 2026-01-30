@@ -22,7 +22,6 @@ import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
 import {
-  HOOK_SCRIPTS,
   getHookScripts,
   getHooksSettingsConfig,
   isWindows,
@@ -48,7 +47,7 @@ export const VERSION_FILE = join(CLAUDE_CONFIG_DIR, '.omc-version.json');
 export const CORE_COMMANDS: string[] = [];
 
 /** Current version */
-export const VERSION = '3.1.0';
+export const VERSION = '3.8.6';
 
 /** Installation result */
 export interface InstallResult {
@@ -287,8 +286,10 @@ export function install(options: InstallOptions = {}): InstallResult {
         const filepath = join(COMMANDS_DIR, filename);
 
         // Create command directory if needed (only for nested paths like 'ultrawork/skill.md')
-        if (filename.includes('/')) {
-          const commandDir = join(COMMANDS_DIR, filename.split('/')[0]);
+        // Handle both Unix (/) and Windows (\) path separators
+        if (filename.includes('/') || filename.includes('\\')) {
+          const segments = filename.split(/[/\\]/);
+          const commandDir = join(COMMANDS_DIR, segments[0]);
           if (!existsSync(commandDir)) {
             mkdirSync(commandDir, { recursive: true });
           }
@@ -312,6 +313,14 @@ export function install(options: InstallOptions = {}): InstallResult {
 
       if (!existsSync(homeMdPath)) {
         if (!existsSync(claudeMdPath) || options.force) {
+          // Backup existing CLAUDE.md before overwriting (if it exists and --force)
+          if (existsSync(claudeMdPath) && options.force) {
+            const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+            const backupPath = join(CLAUDE_CONFIG_DIR, `CLAUDE.md.backup.${today}`);
+            const existingContent = readFileSync(claudeMdPath, 'utf-8');
+            writeFileSync(backupPath, existingContent);
+            log(`Backed up existing CLAUDE.md to ${backupPath}`);
+          }
           writeFileSync(claudeMdPath, loadClaudeMdContent());
           log('Created CLAUDE.md');
         } else {
@@ -401,9 +410,12 @@ export function install(options: InstallOptions = {}): InstallResult {
         'import { existsSync, readdirSync } from "node:fs";',
         'import { homedir } from "node:os";',
         'import { join } from "node:path";',
+        'import { pathToFileURL } from "node:url";',
         '',
         'async function main() {',
         '  const home = homedir();',
+        '  let pluginCacheVersion = null;',
+        '  let pluginCacheDir = null;',
         '  ',
         '  // 1. Development paths (preferred for local development)',
         '  const devPaths = [',
@@ -415,7 +427,7 @@ export function install(options: InstallOptions = {}): InstallResult {
         '  for (const devPath of devPaths) {',
         '    if (existsSync(devPath)) {',
         '      try {',
-        '        await import(devPath);',
+        '        await import(pathToFileURL(devPath).href);',
         '        return;',
         '      } catch { /* continue */ }',
         '    }',
@@ -428,9 +440,11 @@ export function install(options: InstallOptions = {}): InstallResult {
         '      const versions = readdirSync(pluginCacheBase);',
         '      if (versions.length > 0) {',
         '        const latestVersion = versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).reverse()[0];',
-        '        const pluginPath = join(pluginCacheBase, latestVersion, "dist/hud/index.js");',
+        '        pluginCacheVersion = latestVersion;',
+        '        pluginCacheDir = join(pluginCacheBase, latestVersion);',
+        '        const pluginPath = join(pluginCacheDir, "dist/hud/index.js");',
         '        if (existsSync(pluginPath)) {',
-        '          await import(pluginPath);',
+        '          await import(pathToFileURL(pluginPath).href);',
         '          return;',
         '        }',
         '      }',
@@ -443,8 +457,22 @@ export function install(options: InstallOptions = {}): InstallResult {
         '    return;',
         '  } catch { /* continue */ }',
         '  ',
-        '  // 4. Fallback: minimal HUD',
-        '  console.log("[OMC] active");',
+        '  // 4. Fallback: provide detailed error message with fix instructions',
+        '  if (pluginCacheDir && existsSync(pluginCacheDir)) {',
+        '    // Plugin exists but dist/ folder is missing - needs build',
+        '    const distDir = join(pluginCacheDir, "dist");',
+        '    if (!existsSync(distDir)) {',
+        '      console.log(`[OMC HUD] Plugin installed but not built. Run: cd "${pluginCacheDir}" && npm install && npm run build`);',
+        '    } else {',
+        '      console.log(`[OMC HUD] Plugin dist/ exists but HUD not found. Run: cd "${pluginCacheDir}" && npm run build`);',
+        '    }',
+        '  } else if (existsSync(pluginCacheBase)) {',
+        '    // Plugin cache directory exists but no versions',
+        '    console.log(`[OMC HUD] Plugin cache found but no versions installed. Run: /oh-my-claudecode:omc-setup`);',
+        '  } else {',
+        '    // No plugin installation found at all',
+        '    console.log("[OMC HUD] Plugin not installed. Run: /oh-my-claudecode:omc-setup");',
+        '  }',
         '}',
         '',
         'main();',
@@ -502,7 +530,7 @@ export function install(options: InstallOptions = {}): InstallResult {
     log('Saved version metadata');
 
     result.success = true;
-    const hookCount = Object.keys(HOOK_SCRIPTS).length;
+    const hookCount = Object.keys(getHookScripts()).length;
     result.message = `Successfully installed ${result.installedAgents.length} agents, ${result.installedCommands.length} commands, ${result.installedSkills.length} skills, and ${hookCount} hooks`;
 
   } catch (error) {

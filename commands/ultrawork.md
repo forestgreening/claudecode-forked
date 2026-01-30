@@ -1,5 +1,6 @@
 ---
 description: Activate maximum performance mode with parallel agent orchestration for high-throughput task completion
+aliases: [ulw, uw, turbo]
 ---
 
 # Ultrawork Skill
@@ -15,6 +16,23 @@ This skill enhances Claude's capabilities by:
 3. **Background Operations**: Using `run_in_background: true` for long operations
 4. **Persistence Enforcement**: Never stopping until all tasks are verified complete
 5. **Smart Model Routing**: Using tiered agents to save tokens
+
+## DELEGATION ENFORCEMENT (CRITICAL)
+
+**YOU ARE AN ORCHESTRATOR, NOT AN IMPLEMENTER.**
+
+| Action | YOU Do | DELEGATE |
+|--------|--------|----------|
+| Read files for context | ✓ | |
+| Track progress (TODO) | ✓ | |
+| Spawn parallel agents | ✓ | |
+| **ANY code change** | ✗ NEVER | executor-low/executor/executor-high |
+| **UI work** | ✗ NEVER | designer/designer-high |
+| **Docs** | ✗ NEVER | writer |
+
+**Path Exception**: Only write to `.omc/`, `.claude/`, `CLAUDE.md`, `AGENTS.md`
+
+The PreToolUse hook will warn you if you attempt direct code changes.
 
 ## Smart Model Routing (CRITICAL - SAVE TOKENS)
 
@@ -73,7 +91,7 @@ Task(subagent_type="explore-medium", model="sonnet", prompt="Find all authentica
 
 **Run Blocking** (foreground):
 - Quick status checks: git status, ls, pwd
-- File reads, edits
+- File reads (NOT edits - delegate edits to executor)
 - Simple commands
 
 ## Verification Checklist

@@ -9,10 +9,10 @@ Automate the release process for oh-my-claudecode.
 ## Usage
 
 ```
-/release <version>
+/oh-my-claudecode:release <version>
 ```
 
-Example: `/release 2.4.0` or `/release patch` or `/release minor`
+Example: `/oh-my-claudecode:release 2.4.0` or `/oh-my-claudecode:release patch` or `/oh-my-claudecode:release minor`
 
 ## Release Checklist
 
@@ -56,7 +56,7 @@ gh release create v<version> --title "v<version> - <title>" --notes "<release no
 ```
 
 ### 7. Verify
-- [ ] npm: https://www.npmjs.com/package/oh-my-claudecode
+- [ ] npm: https://www.npmjs.com/package/oh-my-claude-sisyphus
 - [ ] GitHub: https://github.com/Yeachan-Heo/oh-my-claudecode/releases
 
 ## Version Files Reference

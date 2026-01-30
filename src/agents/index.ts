@@ -34,6 +34,7 @@ export { analystAgent, ANALYST_PROMPT_METADATA } from './analyst.js';
 export { coordinatorAgent, ORCHESTRATOR_SISYPHUS_PROMPT_METADATA } from './coordinator.js';
 export { plannerAgent, PLANNER_PROMPT_METADATA } from './planner.js';
 export { qaTesterAgent, QA_TESTER_PROMPT_METADATA } from './qa-tester.js';
+export { scientistAgent, SCIENTIST_PROMPT_METADATA } from './scientist.js';
 export { flutterEngineerAgent, FLUTTER_ENGINEER_PROMPT_METADATA } from './flutter-engineer.js';
 export { founderAgent, FOUNDER_PROMPT_METADATA } from './founder.js';
 
@@ -45,9 +46,12 @@ export {
   executorLowAgent,
   researcherLowAgent,
   exploreMediumAgent,
+  exploreHighAgent,
   designerLowAgent,
   designerHighAgent,
-  qaTesterHighAgent
+  qaTesterHighAgent,
+  scientistLowAgent,
+  scientistHighAgent
 } from './definitions.js';
 
 // Core exports (getAgentDefinitions and omcSystemPrompt)

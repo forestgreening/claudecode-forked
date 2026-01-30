@@ -1,7 +1,6 @@
 ---
 name: ultraqa
 description: QA cycling workflow - test, verify, fix, repeat until goal met
-user-invocable: true
 ---
 
 # UltraQA Skill
@@ -20,11 +19,11 @@ Parse the goal from arguments. Supported formats:
 
 | Invocation | Goal Type | What to Check |
 |------------|-----------|---------------|
-| `/ultraqa --tests` | tests | All test suites pass |
-| `/ultraqa --build` | build | Build succeeds with exit 0 |
-| `/ultraqa --lint` | lint | No lint errors |
-| `/ultraqa --typecheck` | typecheck | No TypeScript errors |
-| `/ultraqa --custom "pattern"` | custom | Custom success pattern in output |
+| `/oh-my-claudecode:ultraqa --tests` | tests | All test suites pass |
+| `/oh-my-claudecode:ultraqa --build` | build | Build succeeds with exit 0 |
+| `/oh-my-claudecode:ultraqa --lint` | lint | No lint errors |
+| `/oh-my-claudecode:ultraqa --typecheck` | typecheck | No TypeScript errors |
+| `/oh-my-claudecode:ultraqa --custom "pattern"` | custom | Custom success pattern in output |
 
 If no structured goal provided, interpret the argument as a custom goal.
 
@@ -108,7 +107,7 @@ Track state in `.omc/ultraqa-state.json`:
 
 ## Cancellation
 
-User can cancel with `/cancel-ultraqa` which clears the state file.
+User can cancel with `/oh-my-claudecode:cancel` which clears the state file.
 
 ## Important Rules
 
@@ -117,6 +116,19 @@ User can cancel with `/cancel-ultraqa` which clears the state file.
 3. **EARLY EXIT on pattern** - 3x same failure = stop and surface
 4. **CLEAR OUTPUT** - User should always know current cycle and status
 5. **CLEAN UP** - Clear state file on completion or cancellation
+
+## STATE CLEANUP ON COMPLETION
+
+**IMPORTANT: Delete state files on completion - do NOT just set `active: false`**
+
+When goal is met OR max cycles reached OR exiting early:
+
+```bash
+# Delete ultraqa state file
+rm -f .omc/state/ultraqa-state.json
+```
+
+This ensures clean state for future sessions. Stale state files with `active: false` should not be left behind.
 
 ---
 

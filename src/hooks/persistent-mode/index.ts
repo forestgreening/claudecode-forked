@@ -18,16 +18,14 @@ import {
   incrementReinforcement,
   deactivateUltrawork,
   getUltraworkPersistenceMessage
-} from '../ultrawork-state/index.js';
+} from '../ultrawork/index.js';
 import {
   readRalphState,
   incrementRalphIteration,
   clearRalphState,
   detectCompletionPromise,
   getPrdCompletionStatus,
-  getRalphContext
-} from '../ralph-loop/index.js';
-import {
+  getRalphContext,
   readVerificationState,
   startVerification,
   recordArchitectFeedback,
@@ -36,9 +34,13 @@ import {
   detectArchitectApproval,
   detectArchitectRejection,
   clearVerificationState
-} from '../ralph-verifier/index.js';
-import { checkIncompleteTodos, getNextPendingTodo } from '../todo-continuation/index.js';
+} from '../ralph/index.js';
+import { checkIncompleteTodos, getNextPendingTodo, StopContext, isUserAbort, isContextLimitStop } from '../todo-continuation/index.js';
 import { TODO_CONTINUATION_PROMPT } from '../../installer/hooks.js';
+import {
+  isAutopilotActive
+} from '../autopilot/index.js';
+import { checkAutopilot } from '../autopilot/enforcement.js';
 
 export interface PersistentModeResult {
   /** Whether to block the stop event */
@@ -46,7 +48,7 @@ export interface PersistentModeResult {
   /** Message to inject into context */
   message: string;
   /** Which mode triggered the block */
-  mode: 'ralph' | 'ultrawork' | 'todo-continuation' | 'none';
+  mode: 'ralph' | 'ultrawork' | 'todo-continuation' | 'autopilot' | 'none';
   /** Additional metadata */
   metadata?: {
     todoCount?: number;
@@ -54,6 +56,9 @@ export interface PersistentModeResult {
     maxIterations?: number;
     reinforcementCount?: number;
     todoContinuationAttempts?: number;
+    phase?: string;
+    tasksCompleted?: number;
+    tasksTotal?: number;
   };
 }
 
@@ -330,17 +335,8 @@ async function checkUltrawork(
     return null;
   }
 
-  // If no incomplete todos, ultrawork can complete
-  if (!hasIncompleteTodos) {
-    deactivateUltrawork(directory);
-    return {
-      shouldBlock: false,
-      message: `[ULTRAWORK COMPLETE] All tasks finished. Ultrawork mode deactivated. Well done!`,
-      mode: 'none'
-    };
-  }
-
-  // Reinforce ultrawork mode
+  // Reinforce ultrawork mode - ALWAYS continue while active.
+  // This prevents false stops from bash errors, transient failures, etc.
   const newState = incrementReinforcement(directory);
   if (!newState) {
     return null;
@@ -379,11 +375,15 @@ async function checkTodoContinuation(
   // Track continuation attempts to prevent infinite loops
   const attemptCount = sessionId ? trackTodoContinuationAttempt(sessionId) : 1;
 
+  // Use dynamic label based on source (Tasks vs todos)
+  const sourceLabel = result.source === 'task' ? 'Tasks' : 'todos';
+  const sourceLabelLower = result.source === 'task' ? 'tasks' : 'todos';
+
   if (attemptCount > MAX_TODO_CONTINUATION_ATTEMPTS) {
     // Too many attempts - agent appears stuck, allow stop but warn
     return {
       shouldBlock: false,
-      message: `[TODO CONTINUATION LIMIT] Attempted ${MAX_TODO_CONTINUATION_ATTEMPTS} continuations without progress. ${result.count} tasks remain incomplete. Consider reviewing the stuck tasks or asking the user for guidance.`,
+      message: `[TODO CONTINUATION LIMIT] Attempted ${MAX_TODO_CONTINUATION_ATTEMPTS} continuations without progress. ${result.count} ${sourceLabelLower} remain incomplete. Consider reviewing the stuck ${sourceLabelLower} or asking the user for guidance.`,
       mode: 'none',
       metadata: {
         todoCount: result.count,
@@ -394,7 +394,7 @@ async function checkTodoContinuation(
 
   const nextTodo = getNextPendingTodo(result);
   const nextTaskInfo = nextTodo
-    ? `\n\nNext task: "${nextTodo.content}" (${nextTodo.status})`
+    ? `\n\nNext ${result.source === 'task' ? 'Task' : 'todo'}: "${nextTodo.content}" (${nextTodo.status})`
     : '';
 
   const attemptInfo = attemptCount > 1
@@ -405,7 +405,7 @@ async function checkTodoContinuation(
 
 ${TODO_CONTINUATION_PROMPT}
 
-[Status: ${result.count} of ${result.total} tasks remaining]${nextTaskInfo}${attemptInfo}
+[Status: ${result.count} of ${result.total} ${sourceLabelLower} remaining]${nextTaskInfo}${attemptInfo}
 
 </todo-continuation>
 
@@ -430,18 +430,59 @@ ${TODO_CONTINUATION_PROMPT}
  */
 export async function checkPersistentModes(
   sessionId?: string,
-  directory?: string
+  directory?: string,
+  stopContext?: StopContext  // NEW: from todo-continuation types
 ): Promise<PersistentModeResult> {
   const workingDir = directory || process.cwd();
 
+  // CRITICAL: Never block context-limit stops.
+  // Blocking these causes a deadlock where Claude Code cannot compact.
+  // See: https://github.com/Yeachan-Heo/oh-my-claudecode/issues/213
+  if (isContextLimitStop(stopContext)) {
+    return {
+      shouldBlock: false,
+      message: '',
+      mode: 'none'
+    };
+  }
+
+  // Check for user abort - skip all continuation enforcement
+  if (isUserAbort(stopContext)) {
+    return {
+      shouldBlock: false,
+      message: '',
+      mode: 'none'
+    };
+  }
+
   // First, check for incomplete todos (we need this info for ultrawork)
-  const todoResult = await checkIncompleteTodos(sessionId, workingDir);
+  // Note: stopContext already checked above, but pass it for consistency
+  const todoResult = await checkIncompleteTodos(sessionId, workingDir, stopContext);
   const hasIncompleteTodos = todoResult.count > 0;
 
   // Priority 1: Ralph (explicit loop mode)
   const ralphResult = await checkRalphLoop(sessionId, workingDir);
   if (ralphResult?.shouldBlock) {
     return ralphResult;
+  }
+
+  // Priority 1.5: Autopilot (full orchestration mode - higher than ultrawork, lower than ralph)
+  if (isAutopilotActive(workingDir)) {
+    const autopilotResult = await checkAutopilot(sessionId, workingDir);
+    if (autopilotResult?.shouldBlock) {
+      return {
+        shouldBlock: true,
+        message: autopilotResult.message,
+        mode: 'autopilot',
+        metadata: {
+          iteration: autopilotResult.metadata?.iteration,
+          maxIterations: autopilotResult.metadata?.maxIterations,
+          phase: autopilotResult.phase,
+          tasksCompleted: autopilotResult.metadata?.tasksCompleted,
+          tasksTotal: autopilotResult.metadata?.tasksTotal
+        }
+      };
+    }
   }
 
   // Priority 2: Ultrawork Mode (performance mode with persistence)

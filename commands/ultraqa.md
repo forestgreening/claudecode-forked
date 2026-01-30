@@ -18,11 +18,11 @@ Parse the goal from arguments. Supported formats:
 
 | Invocation | Goal Type | What to Check |
 |------------|-----------|---------------|
-| `/ultraqa --tests` | tests | All test suites pass |
-| `/ultraqa --build` | build | Build succeeds with exit 0 |
-| `/ultraqa --lint` | lint | No lint errors |
-| `/ultraqa --typecheck` | typecheck | No TypeScript errors |
-| `/ultraqa --custom "pattern"` | custom | Custom success pattern in output |
+| `/oh-my-claudecode:ultraqa --tests` | tests | All test suites pass |
+| `/oh-my-claudecode:ultraqa --build` | build | Build succeeds with exit 0 |
+| `/oh-my-claudecode:ultraqa --lint` | lint | No lint errors |
+| `/oh-my-claudecode:ultraqa --typecheck` | typecheck | No TypeScript errors |
+| `/oh-my-claudecode:ultraqa --custom "pattern"` | custom | Custom success pattern in output |
 
 If no structured goal provided, interpret the argument as a custom goal.
 
@@ -106,7 +106,7 @@ Track state in `.omc/ultraqa-state.json`:
 
 ## Cancellation
 
-User can cancel with `/cancel-ultraqa` which clears the state file.
+User can cancel with `/oh-my-claudecode:cancel` which clears the state file.
 
 ## Important Rules
 

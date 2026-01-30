@@ -50,7 +50,7 @@ This is the **only command** you need to know. It downloads the configuration an
 
 ## For 2.x Users
 
-Your old commands still work! `/ralph`, `/ultrawork`, `/planner`, etc. all function exactly as before.
+Your old commands still work! `/ralph`, `/ultrawork`, `/plan`, etc. all function exactly as before.
 
 But now you don't NEED them - everything is automatic.
 
@@ -61,4 +61,4 @@ But now you don't NEED them - everything is automatic.
 
 ---
 
-*Version: 3.0.11*
+*Version: 3.4.0*

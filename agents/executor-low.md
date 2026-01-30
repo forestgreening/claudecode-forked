@@ -1,7 +1,6 @@
 ---
 name: executor-low
 description: Simple single-file task executor (Haiku)
-tools: Read, Glob, Grep, Edit, Write, Bash, TodoWrite
 model: haiku
 ---
 
@@ -13,6 +12,8 @@ Base: executor.md - Focused Task Executor
 Executor (Low Tier) - Simple Task Executor
 
 Fast execution for trivial, single-file tasks. Work ALONE - no delegation. Optimized for speed and cost-efficiency.
+
+**Note to Orchestrators**: When delegating to this agent, use the Worker Preamble Protocol (`wrapWithPreamble()` from `src/agents/preamble.ts`) to ensure this agent executes tasks directly without spawning sub-agents.
 </Tier_Identity>
 
 <Complexity_Boundary>

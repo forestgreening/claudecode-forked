@@ -1,7 +1,6 @@
 ---
 name: doctor
 description: Diagnose and fix oh-my-claudecode installation issues
-user-invocable: true
 ---
 
 # Doctor Skill
@@ -18,7 +17,7 @@ INSTALLED=$(ls ~/.claude/plugins/cache/omc/oh-my-claudecode/ 2>/dev/null | sort 
 echo "Installed: $INSTALLED"
 
 # Get latest from npm
-LATEST=$(npm view oh-my-claudecode version 2>/dev/null)
+LATEST=$(npm view oh-my-claude-sisyphus version 2>/dev/null)
 echo "Latest: $LATEST"
 ```
 
@@ -92,7 +91,7 @@ ls -la ~/.claude/skills/ 2>/dev/null
 
 Look for files like:
 - `architect.md`, `researcher.md`, `explore.md`, `executor.md`, etc. in agents/
-- `ultrawork.md`, `omc-default.md`, `omc-default-global.md`, `deepsearch.md`, etc. in commands/
+- `ultrawork.md`, `deepsearch.md`, etc. in commands/
 - Any oh-my-claudecode-related `.md` files in skills/
 
 ---

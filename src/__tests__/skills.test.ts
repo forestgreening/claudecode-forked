@@ -8,13 +8,13 @@ describe('Builtin Skills', () => {
   });
 
   describe('createBuiltinSkills()', () => {
-    it('should return correct number of skills (26)', () => {
+    it('should return correct number of skills (37)', () => {
       const skills = createBuiltinSkills();
-      // 26 skills: analyze, cancel-ralph, cancel-ultraqa, cancel-ultrawork, deepinit,
-      // deepsearch, doctor, frontend-ui-ux, git-master, help, hud, learner, note,
-      // omc-default, omc-default-global, omc-setup, plan, planner, ralplan, ralph-init, ralph,
-      // release, review, orchestrate, ultraqa, ultrawork
-      expect(skills).toHaveLength(26);
+      // 37 skills: analyze, autopilot, build-fix, cancel, code-review, deepinit, deepsearch, doctor, ecomode,
+      // frontend-ui-ux, git-master, help, hud, learn-about-omc, learner, local-skills-setup, mcp-setup, note,
+      // omc-setup, orchestrate, pipeline, plan, project-session-manager, ralph, ralph-init, ralplan, release, research, review,
+      // security-review, skill, swarm, tdd, ultrapilot, ultraqa, ultrawork, writer-memory
+      expect(skills).toHaveLength(37);
     });
 
     it('should return an array of BuiltinSkill objects', () => {
@@ -64,32 +64,43 @@ describe('Builtin Skills', () => {
     it('should have valid skill names', () => {
       const skills = createBuiltinSkills();
       const expectedSkills = [
-        'orchestrate',
-        'ralph',
-        'ralph-init',
+        'analyze',
+        'autopilot',
+        'build-fix',
+        'cancel',
+        'code-review',
+        'deepinit',
+        'deepsearch',
+        'doctor',
+        'ecomode',
         'frontend-ui-ux',
         'git-master',
-        'ultrawork',
-        'analyze',
-        'deepsearch',
-        'planner',
-        'review',
-        'deepinit',
-        'release',
-        'cancel-ralph',
-        'cancel-ultraqa',
-        'cancel-ultrawork',
-        'learner',
-        'plan',
-        'ralplan',
-        'ultraqa',
-        'doctor',
         'help',
         'hud',
+        'learn-about-omc',
+        'learner',
+        'local-skills-setup',
+        'mcp-setup',
         'note',
-        'omc-default',
-        'omc-default-global',
         'omc-setup',
+        'orchestrate',
+        'pipeline',
+        'plan',
+        'project-session-manager',
+        'ralph',
+        'ralph-init',
+        'ralplan',
+        'release',
+        'research',
+        'review',
+        'security-review',
+        'skill',
+        'swarm',
+        'tdd',
+        'ultrapilot',
+        'ultraqa',
+        'ultrawork',
+        'writer-memory',
       ];
 
       const actualSkillNames = skills.map((s) => s.name);
@@ -133,8 +144,10 @@ describe('Builtin Skills', () => {
   describe('listBuiltinSkillNames()', () => {
     it('should return all skill names', () => {
       const names = listBuiltinSkillNames();
-      expect(names).toHaveLength(26);
+      expect(names).toHaveLength(37);
       expect(names).toContain('orchestrate');
+      expect(names).toContain('autopilot');
+      expect(names).toContain('cancel');
       expect(names).toContain('ralph');
       expect(names).toContain('ralph-init');
       expect(names).toContain('frontend-ui-ux');
@@ -142,7 +155,7 @@ describe('Builtin Skills', () => {
       expect(names).toContain('ultrawork');
       expect(names).toContain('analyze');
       expect(names).toContain('deepsearch');
-      expect(names).toContain('planner');
+      expect(names).toContain('plan');
       expect(names).toContain('review');
       expect(names).toContain('deepinit');
       expect(names).toContain('release');
@@ -150,8 +163,8 @@ describe('Builtin Skills', () => {
       expect(names).toContain('help');
       expect(names).toContain('hud');
       expect(names).toContain('note');
-      expect(names).toContain('omc-default');
-      expect(names).toContain('omc-default-global');
+      expect(names).toContain('learn-about-omc');
+      expect(names).toContain('omc-setup');
     });
 
     it('should return an array of strings', () => {

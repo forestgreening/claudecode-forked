@@ -182,3 +182,122 @@ export {
   type RoutingRule,
   type PromptAdaptationStrategy,
 } from './model-routing/index.js';
+
+// Notepad Wisdom - plan-scoped wisdom accumulation
+export {
+  // Functions
+  initPlanNotepad,
+  readPlanWisdom,
+  addLearning,
+  addDecision,
+  addIssue,
+  addProblem,
+  getWisdomSummary,
+  // Types
+  type WisdomEntry,
+  type WisdomCategory,
+  type PlanWisdom
+} from './notepad-wisdom/index.js';
+
+// Delegation Categories - semantic task routing
+export {
+  // Functions
+  resolveCategory,
+  isValidCategory,
+  getAllCategories,
+  getCategoryDescription,
+  getCategoryTier,
+  getCategoryTemperature,
+  getCategoryThinkingBudget,
+  getCategoryThinkingBudgetTokens,
+  getCategoryForTask,
+  detectCategoryFromPrompt,
+  enhancePromptWithCategory,
+  // Constants
+  CATEGORY_CONFIGS,
+  THINKING_BUDGET_TOKENS,
+  // Types
+  type DelegationCategory,
+  type CategoryConfig,
+  type ResolvedCategory,
+  type CategoryContext,
+  type ThinkingBudget
+} from './delegation-categories/index.js';
+
+// State Manager - unified state file management
+export {
+  // Classes
+  StateManager,
+  createStateManager,
+  // Functions
+  getStatePath,
+  getLegacyPaths,
+  ensureStateDir,
+  readState,
+  writeState,
+  clearState,
+  migrateState,
+  listStates,
+  cleanupOrphanedStates,
+  // Enums/Constants
+  StateLocation,
+  isStateLocation,
+  DEFAULT_STATE_CONFIG,
+  // Types
+  type StateConfig,
+  type StateReadResult,
+  type StateWriteResult,
+  type StateClearResult,
+  type StateMigrationResult,
+  type StateFileInfo,
+  type ListStatesOptions,
+  type CleanupOptions,
+  type CleanupResult,
+  type StateData
+} from './state-manager/index.js';
+
+
+// Verification - verification protocol for ralph, ultrawork, autopilot
+export {
+  // Functions
+  createProtocol,
+  createChecklist,
+  runVerification,
+  checkEvidence,
+  formatReport,
+  validateChecklist,
+  // Constants
+  STANDARD_CHECKS,
+  // Types
+  type VerificationProtocol,
+  type VerificationCheck,
+  type VerificationChecklist,
+  type VerificationEvidence,
+  type VerificationEvidenceType,
+  type VerificationSummary,
+  type ValidationResult,
+  type VerificationOptions,
+  type ReportOptions
+} from './verification/index.js';
+
+// Task Decomposer - task decomposition and file ownership
+export {
+  // Functions
+  decomposeTask,
+  analyzeTask,
+  identifyComponents,
+  generateSubtasks,
+  assignFileOwnership,
+  identifySharedFiles,
+  // Types
+  type TaskAnalysis,
+  type Component,
+  type Subtask,
+  type SharedFile,
+  type DecompositionResult,
+  type ProjectContext,
+  type TaskType,
+  type ComponentRole,
+  type FileOwnership,
+  type DecompositionStrategy
+} from './task-decomposer/index.js';
