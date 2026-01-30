@@ -4,57 +4,30 @@
 
 ---
 
-## SESSION START PROTOCOL (CRITICAL - MUST FOLLOW)
+## QUICK START
 
-**세션이 시작되면 반드시 아래 순서를 따르세요:**
+세션을 시작하면 `/project` 명령어로 작업할 프로젝트를 선택하세요:
 
-### Step 1: 작업 디렉토리 선택
-
-1. `.omc/workspaces.json` 파일을 읽어서 기존 프로젝트 목록을 확인
-2. AskUserQuestion 도구를 사용하여 사용자에게 질문:
-
-**질문 형식:**
-- 헤더: "Workspace"
-- 질문: "어떤 프로젝트에서 작업할까요?"
-- 옵션:
-  - 기존 프로젝트들 (workspaces 배열에서 가져옴, 최근 사용순 정렬)
-  - 마지막 옵션: "새 프로젝트 추가"
-
-### Step 2: 선택 처리
-
-**기존 프로젝트 선택 시:**
-1. 해당 프로젝트 경로로 `cd` 명령 실행
-2. workspaces.json의 해당 프로젝트 `lastUsed` 업데이트
-3. `lastWorkspace` 업데이트
-4. "**[프로젝트명]** 에서 작업을 시작합니다. 무엇을 도와드릴까요?" 출력
-
-**"새 프로젝트 추가" 선택 시:**
-1. AskUserQuestion으로 프로젝트 경로와 이름 입력받기
-2. 경로가 존재하는지 확인 (`ls` 명령)
-3. workspaces.json에 새 프로젝트 추가
-4. 해당 경로로 이동
-5. "**[프로젝트명]**이 추가되었습니다. 무엇을 도와드릴까요?" 출력
-
-### Step 3: 작업 진행
-
-작업 디렉토리가 설정된 후에는 해당 디렉토리 컨텍스트에서 모든 작업을 수행합니다.
+```
+/project
+```
 
 ---
 
-## WORKSPACE COMMANDS
-
-사용자가 다음 명령을 사용할 수 있습니다:
+## PROJECT COMMANDS
 
 | 명령 | 설명 |
 |------|------|
-| `/workspace` 또는 `/ws` | 다른 프로젝트로 전환 |
-| `/workspace list` | 등록된 프로젝트 목록 보기 |
-| `/workspace add` | 새 프로젝트 추가 |
-| `/workspace remove` | 프로젝트 목록에서 제거 |
+| `/project` | 프로젝트 선택 프롬프트 |
+| `/project list` | 등록된 프로젝트 목록 보기 |
+| `/project add` | 새 프로젝트 추가 |
+| `/project remove` | 프로젝트 목록에서 제거 |
 
 ---
 
 ## WORKSPACES.JSON STRUCTURE
+
+프로젝트 정보는 `.omc/workspaces.json`에 저장됩니다:
 
 ```json
 {
@@ -71,26 +44,55 @@
 
 ---
 
-## IMPORTANT RULES
+## AUTO-REGISTRATION (CRITICAL)
 
-1. **세션 시작 시 항상 작업 디렉토리를 먼저 확인**하세요
-2. **작업 디렉토리가 설정되기 전에는 코드 작업을 시작하지 마세요**
-3. 프로젝트 전환 시 현재 작업 상태를 저장하거나 확인하세요
-4. oh-my-claudecode의 모든 기능(에이전트, 스킬, 커맨드)을 활용하세요
+새 프로젝트를 생성할 때 **반드시** 워크스페이스에 자동 등록해야 합니다.
+
+### 자동 등록이 필요한 시점
+
+| 상황 | 등록 필요 |
+|------|----------|
+| Founder 아이디에이션 완료 후 프로젝트 생성 | **YES** |
+| `npx create-*`, `npm init` 등으로 프로젝트 생성 | **YES** |
+| `git clone`으로 프로젝트 클론 | **YES** |
+| 기존 프로젝트 폴더에서 작업 시작 | **YES** (미등록 시) |
+
+### 등록 방법
+
+프로젝트 생성/클론 완료 후 다음 단계를 수행:
+
+```
+1. Read .omc/workspaces.json
+2. workspaces 배열에 새 프로젝트 추가:
+   {
+     "path": "C:\\study\\{프로젝트명}",  // 절대 경로
+     "name": "{프로젝트명}",
+     "lastUsed": "{현재 ISO 시간}"
+   }
+3. lastWorkspace를 새 프로젝트 경로로 업데이트
+4. Write .omc/workspaces.json
+5. 사용자에게 알림: "프로젝트가 워크스페이스에 등록되었습니다."
+```
+
+### 주의사항
+
+- 중복 경로 체크 (이미 등록된 경로면 스킵)
+- Windows 경로는 `\\` 이스케이프 (JSON 내부)
+- 등록 후 다음 세션에서 `/project`로 바로 접근 가능
 
 ---
 
 ## INCLUDED FEATURES
 
-이 프로젝트에는 oh-my-claudecode v3.1.0 + 커스텀 에이전트가 포함되어 있습니다:
+이 프로젝트에는 oh-my-claudecode v3.8.9 + 커스텀 에이전트가 포함되어 있습니다:
 
 ### 커스텀 에이전트
 - **flutter-engineer**: Flutter/Dart 모바일 개발 전문가
 - **founder**: 서비스 구상 컨설턴트
 
 ### 주요 기능
-- 27개 전문 에이전트 (tier별 variants 포함)
-- 26개 스킬
+- 35개 전문 에이전트 (tier별 variants 포함)
+- 30개+ 스킬
 - HUD 상태표시줄
 - Intelligent Model Routing
 - Ralph Loop (지속 모드)

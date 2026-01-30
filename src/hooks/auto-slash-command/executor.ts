@@ -7,8 +7,9 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'fs';
-import { join, basename } from 'path';
+import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import type {
   ParsedSlashCommand,
   CommandInfo,
@@ -16,6 +17,10 @@ import type {
   CommandScope,
   ExecuteResult,
 } from './types.js';
+
+/** Get __dirname for ESM modules */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /** Claude config directory */
 const CLAUDE_CONFIG_DIR = join(homedir(), '.claude');
@@ -111,57 +116,122 @@ function discoverCommandsFromDir(
 }
 
 /**
+ * Discover skills from a directory (each subdirectory may have a SKILL.md)
+ */
+function discoverSkillsFromDir(
+  skillsDir: string,
+  scope: CommandScope
+): CommandInfo[] {
+  if (!existsSync(skillsDir)) {
+    return [];
+  }
+
+  const skills: CommandInfo[] = [];
+  try {
+    const skillDirs = readdirSync(skillsDir, { withFileTypes: true });
+    for (const dir of skillDirs) {
+      if (!dir.isDirectory()) continue;
+
+      const skillPath = join(skillsDir, dir.name, 'SKILL.md');
+      if (existsSync(skillPath)) {
+        try {
+          const content = readFileSync(skillPath, 'utf-8');
+          const { data, body } = parseFrontmatter(content);
+
+          const metadata: CommandMetadata = {
+            name: data.name || dir.name,
+            description: data.description || '',
+            argumentHint: data['argument-hint'],
+            model: data.model,
+            agent: data.agent,
+          };
+
+          skills.push({
+            name: data.name || dir.name,
+            path: skillPath,
+            metadata,
+            content: body,
+            scope,
+          });
+        } catch {
+          continue;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors reading skills directory
+  }
+
+  return skills;
+}
+
+/**
+ * Get OMC project root directory
+ * Walks up from current file to find the project root (where package.json lives)
+ */
+function getOmcProjectRoot(): string | null {
+  // Try to find OMC root by looking for package.json with oh-my-claudecode-sisyphus
+  let dir = __dirname;
+  for (let i = 0; i < 10; i++) {
+    const pkgPath = join(dir, 'package.json');
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name === 'oh-my-claudecode-sisyphus') {
+          return dir;
+        }
+      } catch {
+        // Continue searching
+      }
+    }
+    const parent = join(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+// Cache OMC project root
+let cachedOmcRoot: string | null | undefined;
+
+/**
  * Discover all available commands from multiple sources
  */
 export function discoverAllCommands(): CommandInfo[] {
   const userCommandsDir = join(CLAUDE_CONFIG_DIR, 'commands');
   const projectCommandsDir = join(process.cwd(), '.claude', 'commands');
-  const skillsDir = join(CLAUDE_CONFIG_DIR, 'skills');
+  const userSkillsDir = join(CLAUDE_CONFIG_DIR, 'skills');
 
   const userCommands = discoverCommandsFromDir(userCommandsDir, 'user');
   const projectCommands = discoverCommandsFromDir(projectCommandsDir, 'project');
 
-  // Discover skills (each skill directory may have a SKILL.md)
-  const skillCommands: CommandInfo[] = [];
-  if (existsSync(skillsDir)) {
-    try {
-      const skillDirs = readdirSync(skillsDir, { withFileTypes: true });
-      for (const dir of skillDirs) {
-        if (!dir.isDirectory()) continue;
+  // Discover skills from ~/.claude/skills/
+  const userSkills = discoverSkillsFromDir(userSkillsDir, 'skill');
 
-        const skillPath = join(skillsDir, dir.name, 'SKILL.md');
-        if (existsSync(skillPath)) {
-          try {
-            const content = readFileSync(skillPath, 'utf-8');
-            const { data, body } = parseFrontmatter(content);
+  // Discover skills from OMC project root's skills/ directory (bundled skills)
+  if (cachedOmcRoot === undefined) {
+    cachedOmcRoot = getOmcProjectRoot();
+  }
+  const bundledSkills: CommandInfo[] = [];
+  if (cachedOmcRoot) {
+    const bundledSkillsDir = join(cachedOmcRoot, 'skills');
+    bundledSkills.push(...discoverSkillsFromDir(bundledSkillsDir, 'skill'));
+  }
 
-            const metadata: CommandMetadata = {
-              name: data.name || dir.name,
-              description: data.description || '',
-              argumentHint: data['argument-hint'],
-              model: data.model,
-              agent: data.agent,
-            };
+  // Priority: project > user commands > user skills > bundled skills
+  // Deduplicate by name (first one wins)
+  const seen = new Set<string>();
+  const result: CommandInfo[] = [];
 
-            skillCommands.push({
-              name: data.name || dir.name,
-              path: skillPath,
-              metadata,
-              content: body,
-              scope: 'skill',
-            });
-          } catch {
-            continue;
-          }
-        }
-      }
-    } catch {
-      // Ignore errors reading skills directory
+  for (const cmd of [...projectCommands, ...userCommands, ...userSkills, ...bundledSkills]) {
+    const lowerName = cmd.name.toLowerCase();
+    if (!seen.has(lowerName)) {
+      seen.add(lowerName);
+      result.push(cmd);
     }
   }
 
-  // Priority: project > user > skills
-  return [...projectCommands, ...userCommands, ...skillCommands];
+  return result;
 }
 
 /**

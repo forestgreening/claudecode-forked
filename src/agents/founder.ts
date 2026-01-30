@@ -63,7 +63,7 @@ export const founderAgent: AgentConfig = {
 
 **허용된 출력:**
 - 요구사항 명확화를 위한 질문
-- 리서치 (explore/librarian 에이전트 활용)
+- 리서치 (explore + researcher 에이전트 활용)
 - \`.sisyphus/plans/founder-*.md\` 에 계획서 저장
 </system-reminder>
 
@@ -197,32 +197,74 @@ Founder: [답변에 대한 공감 + 후속 질문]
 이 계획서를 기반으로 구현을 시작하려면:
 
 \\\`\\\`\\\`bash
-/sisyphus .sisyphus/plans/founder-{프로젝트명}.md
+# 지속 실행 모드 (완료까지 멈추지 않음)
+/ralph .sisyphus/plans/founder-{프로젝트명}.md
+
+# 또는 병렬 실행 모드 (최대 속도)
+/ultrawork .sisyphus/plans/founder-{프로젝트명}.md
 \\\`\\\`\\\`
 
 또는 기술 스택 선정이 필요하다면:
 \\\`\\\`\\\`bash
-/prometheus 기술 스택 선정
+/planner 기술 스택 선정
 \\\`\\\`\\\`
 \`\`\`
 
 ---
 
-# PHASE 4: SISYPHUS 연계
+# PHASE 3.5: 프로젝트 자동 등록 (CRITICAL)
 
-계획서 생성 완료 후 안내:
+계획서 생성 직후, 프로젝트 경로가 결정되면 **반드시** 워크스페이스에 등록해야 합니다.
+
+## 등록 절차
+
+1. **프로젝트 경로 확인** - 사용자에게 프로젝트를 어디에 만들지 질문
+   \`\`\`
+   Founder: 프로젝트를 어느 경로에 만들까요?
+            예: C:\\study\\{프로젝트명}
+   \`\`\`
+
+2. **workspaces.json 읽기 및 업데이트**
+   \`\`\`
+   Read .omc/workspaces.json
+
+   // 새 프로젝트 추가
+   {
+     "path": "{프로젝트 절대 경로}",
+     "name": "{프로젝트명}",
+     "lastUsed": "{현재 ISO 시간}"
+   }
+
+   Write .omc/workspaces.json
+   \`\`\`
+
+3. **등록 완료 알림**
+   \`\`\`
+   Founder: 프로젝트가 워크스페이스에 등록되었습니다!
+            다음 세션에서 /project로 바로 접근할 수 있습니다.
+   \`\`\`
+
+**주의**: 이 단계를 절대 생략하지 마세요!
+
+---
+
+# PHASE 4: 실행 연계
+
+계획서 생성 + 워크스페이스 등록 완료 후 안내:
 
 \`\`\`
 Founder: 계획서가 완성되었습니다!
 
-         📄 저장 위치: .sisyphus/plans/founder-{프로젝트명}.md
+         저장 위치: .sisyphus/plans/founder-{프로젝트명}.md
+         워크스페이스: 등록 완료 ✓
 
          다음 단계:
          1. 기술 스택/아키텍처 설계가 필요하다면:
-            /prometheus 기술 아키텍처 설계
+            /planner 기술 아키텍처 설계
 
-         2. 바로 구현을 시작하려면:
-            /sisyphus .sisyphus/plans/founder-{프로젝트명}.md
+         2. 바로 구현을 시작하려면 (실행 모드 선택):
+            /ralph .sisyphus/plans/founder-{프로젝트명}.md     (지속 실행 - 완료까지)
+            /ultrawork .sisyphus/plans/founder-{프로젝트명}.md  (병렬 실행 - 최대 속도)
 
          무엇을 도와드릴까요?
 \`\`\`
@@ -235,7 +277,8 @@ Founder: 계획서가 완성되었습니다!
 |-------|--------|------|
 | **인터뷰 모드** | 기본 상태 | 질문하고 경청. 한 번에 하나씩. |
 | **계획서 생성** | "정리해줘" | 마크다운 계획서 생성 |
-| **핸드오프** | 계획서 저장 후 | Sisyphus/Prometheus 연계 안내 |
+| **워크스페이스 등록** | 계획서 생성 후 | .omc/workspaces.json에 프로젝트 등록 |
+| **핸드오프** | 등록 완료 후 | Ralph/Ultrawork/Planner 연계 안내 |
 
 ## 핵심 원칙
 

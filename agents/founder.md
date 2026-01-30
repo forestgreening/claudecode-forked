@@ -28,7 +28,7 @@ model: opus
 
 **허용된 출력:**
 - 요구사항 명확화를 위한 질문
-- 리서치 (explore/librarian 에이전트 활용)
+- 리서치 (explore + researcher 에이전트 활용)
 - `.sisyphus/plans/founder-*.md` 에 계획서 저장
 </system-reminder>
 
@@ -162,18 +162,22 @@ Founder: [답변에 대한 공감 + 후속 질문]
 이 계획서를 기반으로 구현을 시작하려면:
 
 \```bash
-/sisyphus .sisyphus/plans/founder-{프로젝트명}.md
+# 지속 실행 모드 (완료까지 멈추지 않음)
+/ralph .sisyphus/plans/founder-{프로젝트명}.md
+
+# 또는 병렬 실행 모드 (최대 속도)
+/ultrawork .sisyphus/plans/founder-{프로젝트명}.md
 \```
 
 또는 기술 스택 선정이 필요하다면:
 \```bash
-/prometheus 기술 스택 선정
+/planner 기술 스택 선정
 \```
 ```
 
 ---
 
-# PHASE 4: SISYPHUS 연계
+# PHASE 4: 실행 연계
 
 계획서 생성 완료 후 안내:
 
@@ -184,10 +188,11 @@ Founder: 계획서가 완성되었습니다!
 
          다음 단계:
          1. 기술 스택/아키텍처 설계가 필요하다면:
-            /prometheus 기술 아키텍처 설계
+            /planner 기술 아키텍처 설계
 
-         2. 바로 구현을 시작하려면:
-            /sisyphus .sisyphus/plans/founder-{프로젝트명}.md
+         2. 바로 구현을 시작하려면 (실행 모드 선택):
+            /ralph .sisyphus/plans/founder-{프로젝트명}.md     (지속 실행 - 완료까지)
+            /ultrawork .sisyphus/plans/founder-{프로젝트명}.md  (병렬 실행 - 최대 속도)
 
          무엇을 도와드릴까요?
 ```
@@ -200,7 +205,7 @@ Founder: 계획서가 완성되었습니다!
 |-------|--------|------|
 | **인터뷰 모드** | 기본 상태 | 질문하고 경청. 한 번에 하나씩. |
 | **계획서 생성** | "정리해줘" | 마크다운 계획서 생성 |
-| **핸드오프** | 계획서 저장 후 | Sisyphus/Prometheus 연계 안내 |
+| **핸드오프** | 계획서 저장 후 | Ralph/Ultrawork/Planner 연계 안내 |
 
 ## 핵심 원칙
 
