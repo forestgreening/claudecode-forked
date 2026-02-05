@@ -8,11 +8,8 @@
  * 4. omcSystemPrompt for the main orchestrator
  */
 
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
 import type { AgentConfig, ModelType } from '../shared/types.js';
+import { loadAgentPrompt } from './utils.js';
 
 // Re-export base agents from individual files (rebranded names)
 export { architectAgent } from './architect.js';
@@ -25,6 +22,7 @@ export { criticAgent } from './critic.js';
 export { analystAgent } from './analyst.js';
 export { executorAgent } from './executor.js';
 export { plannerAgent } from './planner.js';
+export { deepExecutorAgent } from './deep-executor.js';
 export { qaTesterAgent } from './qa-tester.js';
 export { scientistAgent } from './scientist.js';
 export { flutterEngineerAgent } from './flutter-engineer.js';
@@ -41,41 +39,14 @@ import { criticAgent } from './critic.js';
 import { analystAgent } from './analyst.js';
 import { executorAgent } from './executor.js';
 import { plannerAgent } from './planner.js';
+import { deepExecutorAgent } from './deep-executor.js';
 import { qaTesterAgent } from './qa-tester.js';
 import { scientistAgent } from './scientist.js';
 import { flutterEngineerAgent } from './flutter-engineer.js';
 import { founderAgent } from './founder.js';
 
-// ============================================================
-// DYNAMIC PROMPT LOADING
-// ============================================================
-
-/**
- * Get the package root directory (where agents/ folder lives)
- */
-function getPackageDir(): string {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  // From src/agents/ go up to package root
-  return join(__dirname, '..', '..');
-}
-
-/**
- * Load an agent prompt from /agents/{agentName}.md
- * Strips YAML frontmatter and returns the content
- */
-function loadAgentPrompt(agentName: string): string {
-  try {
-    const agentPath = join(getPackageDir(), 'agents', `${agentName}.md`);
-    const content = readFileSync(agentPath, 'utf-8');
-    // Extract content after YAML frontmatter (---\n...\n---\n)
-    const match = content.match(/^---[\s\S]*?---\s*([\s\S]*)$/);
-    return match ? match[1].trim() : content.trim();
-  } catch (error) {
-    console.warn(`Warning: Could not load prompt for ${agentName}, using fallback`);
-    return `Agent: ${agentName}\n\nPrompt file not found. Please ensure agents/${agentName}.md exists.`;
-  }
-}
+// Re-export loadAgentPrompt (also exported from index.ts)
+export { loadAgentPrompt };
 
 // ============================================================
 // TIERED AGENT VARIANTS
@@ -329,9 +300,36 @@ export const codeReviewerLowAgent: AgentConfig = {
   defaultModel: 'haiku'
 };
 
+/**
+ * Git-Master Agent - Git Operations Expert (Sonnet)
+ */
+export const gitMasterAgent: AgentConfig = {
+  name: 'git-master',
+  description: 'Git expert for atomic commits, rebasing, and history management with style detection',
+  prompt: loadAgentPrompt('git-master'),
+  tools: ['Read', 'Glob', 'Grep', 'Bash'],
+  model: 'sonnet',
+  defaultModel: 'sonnet'
+};
+
 // ============================================================
 // AGENT REGISTRY
 // ============================================================
+
+/**
+ * Agent Role Disambiguation
+ *
+ * HIGH-tier review/planning agents have distinct, non-overlapping roles:
+ *
+ * | Agent | Role | What They Do | What They Don't Do |
+ * |-------|------|--------------|-------------------|
+ * | architect | code-analysis | Analyze code, debug, verify | Requirements, plan creation, plan review |
+ * | analyst | requirements-analysis | Find requirement gaps | Code analysis, planning, plan review |
+ * | planner | plan-creation | Create work plans | Requirements, code analysis, plan review |
+ * | critic | plan-review | Review plan quality | Requirements, code analysis, plan creation |
+ *
+ * Workflow: explore → analyst → planner → critic → executor → architect (verify)
+ */
 
 /**
  * Get all agent definitions as a record for use with Claude Agent SDK
@@ -345,16 +343,25 @@ export function getAgentDefinitions(overrides?: Partial<Record<string, Partial<A
 }> {
   const agents = {
     // Base agents (from individual files)
+    // Role: code-analysis
+    // NotFor: requirements-gathering, plan-creation, plan-review
     architect: architectAgent,
     researcher: researcherAgent,
     explore: exploreAgent,
     designer: designerAgent,
     writer: writerAgent,
     vision: visionAgent,
+    // Role: plan-review
+    // NotFor: requirements-gathering, plan-creation, code-analysis
     critic: criticAgent,
+    // Role: requirements-analysis
+    // NotFor: code-analysis, plan-creation, plan-review
     analyst: analystAgent,
     executor: executorAgent,
+    // Role: plan-creation
+    // NotFor: requirements-gathering, code-analysis, plan-review
     planner: plannerAgent,
+    'deep-executor': deepExecutorAgent,
     'qa-tester': qaTesterAgent,
     scientist: scientistAgent,
     'flutter-engineer': flutterEngineerAgent,
@@ -380,7 +387,8 @@ export function getAgentDefinitions(overrides?: Partial<Record<string, Partial<A
     'tdd-guide': tddGuideAgent,
     'tdd-guide-low': tddGuideLowAgent,
     'code-reviewer': codeReviewerAgent,
-    'code-reviewer-low': codeReviewerLowAgent
+    'code-reviewer-low': codeReviewerLowAgent,
+    'git-master': gitMasterAgent
   };
 
   const result: Record<string, { description: string; prompt: string; tools: string[]; model?: ModelType; defaultModel?: ModelType }> = {};
@@ -450,7 +458,7 @@ This is the recommended workflow for any bug that requires running actual servic
 ### Verification Guidance (Gated for Token Efficiency)
 
 **Verification priority order:**
-1. **Existing tests** (npm test, pytest, etc.) - PREFERRED, cheapest
+1. **Existing tests** (run the project's test command) - PREFERRED, cheapest
 2. **Direct commands** (curl, simple CLI) - cheap
 3. **QA-Tester** (tmux sessions) - expensive, use sparingly
 

@@ -19,7 +19,6 @@ export {
 
   // Loop control
   createRalphLoopHook,
-  detectCompletionPromise,
   isUltraQAActive,
 
   // PRD integration

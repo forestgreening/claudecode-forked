@@ -70,9 +70,9 @@ Task(subagent_type="oh-my-claudecode:architect", model="opus", prompt="...")
 ### Background Execution Rules
 
 **Run in Background** (set `run_in_background: true`):
-- Package installation: npm install, pip install, cargo build
-- Build processes: npm run build, make, tsc
-- Test suites: npm test, pytest, cargo test
+- Package installation (npm install, pip install, cargo build, etc.)
+- Build processes (project build command, make, etc.)
+- Test suites (project test command, etc.)
 - Docker operations: docker build, docker pull
 
 **Run Blocking** (foreground):
@@ -99,10 +99,10 @@ When you believe the task is complete:
 
 2. **Wait for Architect's assessment**
 
-3. **If Architect approves**: Output `<promise>{{PROMISE}}</promise>`
+3. **If Architect approves**: Run `/oh-my-claudecode:cancel` to cleanly exit ralph mode
 4. **If Architect finds issues**: Fix them, then repeat verification
 
-DO NOT output the completion promise without Architect verification.
+DO NOT exit without Architect verification.
 
 ## ZERO TOLERANCE
 
@@ -116,7 +116,7 @@ DO NOT output the completion promise without Architect verification.
 - Review your progress so far
 - Continue from where you left off
 - Use parallel execution and background tasks
-- When FULLY complete AND Architect verified, output: <promise>{{PROMISE}}</promise>
+- When FULLY complete AND Architect verified: Run `/oh-my-claudecode:cancel` to exit and clean up state
 - Do not stop until the task is truly done
 
 Original task:

@@ -2,14 +2,13 @@
  * Ralph Verifier
  *
  * Adds architect verification to ralph completion claims.
- * When ralph outputs a completion promise, instead of immediately
- * accepting it, we trigger an architect verification phase.
+ * When ralph claims completion, an architect verification phase is triggered.
  *
  * Flow:
- * 1. Ralph outputs <promise>TASK_COMPLETE</promise>
- * 2. System detects this and enters verification mode
+ * 1. Ralph claims task is complete
+ * 2. System enters verification mode
  * 3. Architect agent is invoked to verify the work
- * 4. If architect approves -> truly complete
+ * 4. If architect approves -> truly complete, use /oh-my-claudecode:cancel to exit
  * 5. If architect finds flaws -> continue ralph with architect feedback
  */
 
@@ -186,10 +185,8 @@ ${state.architect_feedback ? `**Previous Architect Feedback (rejected):**\n${sta
    - Are tests passing (if applicable)?
 
 3. **Based on Architect's response:**
-   - If APPROVED: Output \`<architect-approved>VERIFIED_COMPLETE</architect-approved>\`
+   - If APPROVED: Output \`<architect-approved>VERIFIED_COMPLETE</architect-approved>\`, then run \`/oh-my-claudecode:cancel\` to cleanly exit
    - If REJECTED: Continue working on the identified issues
-
-DO NOT output the completion promise again until Architect approves.
 
 </ralph-verification>
 
@@ -218,8 +215,8 @@ ${state.original_task}
 
 1. Address ALL issues identified by Architect
 2. Do NOT claim completion again until issues are fixed
-3. When truly done, output the completion promise again
-4. Another Architect verification will be triggered
+3. When truly done, another Architect verification will be triggered
+4. After Architect approves, run \`/oh-my-claudecode:cancel\` to cleanly exit
 
 Continue working now.
 

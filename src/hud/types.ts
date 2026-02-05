@@ -229,7 +229,29 @@ export type HudPreset = 'minimal' | 'focused' | 'full' | 'opencode' | 'dense' | 
  */
 export type AgentsFormat = 'count' | 'codes' | 'codes-duration' | 'detailed' | 'descriptions' | 'tasks' | 'multiline';
 
+/**
+ * Thinking indicator format options:
+ * - bubble: 💭 (thought bubble emoji)
+ * - brain: 🧠 (brain emoji)
+ * - face: 🤔 (thinking face emoji)
+ * - text: "thinking" (full text)
+ */
+export type ThinkingFormat = 'bubble' | 'brain' | 'face' | 'text';
+
+/**
+ * CWD path format options:
+ * - relative: ~/workspace/dotfiles (home-relative)
+ * - absolute: /Users/dat/workspace/dotfiles (full path)
+ * - folder: dotfiles (folder name only)
+ */
+export type CwdFormat = 'relative' | 'absolute' | 'folder';
+
 export interface HudElementConfig {
+  cwd: boolean;              // Show working directory
+  cwdFormat: CwdFormat;      // Path display format
+  gitRepo: boolean;          // Show git repository name
+  gitBranch: boolean;        // Show git branch
+  model: boolean;            // Show current model name
   omcLabel: boolean;
   rateLimits: boolean;  // Show 5h and weekly rate limits
   ralph: boolean;
@@ -245,10 +267,13 @@ export interface HudElementConfig {
   todos: boolean;
   permissionStatus: boolean;  // Show pending permission indicator
   thinking: boolean;          // Show extended thinking indicator
+  thinkingFormat: ThinkingFormat;  // Thinking indicator format
   sessionHealth: boolean;     // Show session health/duration
   useBars: boolean;           // Show visual progress bars instead of/alongside percentages
   showCache: boolean;         // Show cache hit rate in analytics displays
   showCost: boolean;          // Show cost/dollar amounts in analytics displays
+  maxOutputLines: number;     // Max total output lines to prevent input field shrinkage
+  safeMode: boolean;          // Strip ANSI codes and use ASCII-only output to prevent terminal rendering corruption (Issue #346)
 }
 
 export interface HudThresholds {
@@ -266,12 +291,17 @@ export interface HudConfig {
   preset: HudPreset;
   elements: HudElementConfig;
   thresholds: HudThresholds;
-  staleTaskThresholdMinutes?: number; // Default 30
+  staleTaskThresholdMinutes: number; // Default 30
 }
 
 export const DEFAULT_HUD_CONFIG: HudConfig = {
   preset: 'focused',
   elements: {
+    cwd: false,               // Disabled by default for backward compatibility
+    cwdFormat: 'relative',
+    gitRepo: false,           // Disabled by default for backward compatibility
+    gitBranch: false,         // Disabled by default for backward compatibility
+    model: false,             // Disabled by default for backward compatibility
     omcLabel: true,
     rateLimits: true,  // Show rate limits by default
     ralph: true,
@@ -287,10 +317,13 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
     lastSkill: true,
     permissionStatus: false,  // Disabled: heuristic-based, causes false positives
     thinking: true,
+    thinkingFormat: 'text',   // Text format for backward compatibility
     sessionHealth: true,
     useBars: false,  // Disabled by default for backwards compatibility
     showCache: true,
     showCost: true,
+    maxOutputLines: 4,
+    safeMode: true,  // Enabled by default to prevent terminal rendering corruption (Issue #346)
   },
   thresholds: {
     contextWarning: 70,
@@ -298,10 +331,16 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
     contextCritical: 85,
     ralphWarning: 7,
   },
+  staleTaskThresholdMinutes: 30,
 };
 
 export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
   minimal: {
+    cwd: false,
+    cwdFormat: 'folder',
+    gitRepo: false,
+    gitBranch: false,
+    model: false,
     omcLabel: true,
     rateLimits: true,
     ralph: true,
@@ -311,18 +350,26 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     lastSkill: true,
     contextBar: false,
     agents: true,
-    agentsFormat: 'count', // Just count for minimal mode
+    agentsFormat: 'count',
     agentsMaxLines: 0,
     backgroundTasks: false,
     todos: true,
     permissionStatus: false,
     thinking: false,
+    thinkingFormat: 'text',
     sessionHealth: false,
     useBars: false,
     showCache: false,
     showCost: false,
+    maxOutputLines: 2,
+    safeMode: true,
   },
   analytics: {
+    cwd: false,
+    cwdFormat: 'folder',
+    gitRepo: false,
+    gitBranch: false,
+    model: false,
     omcLabel: false,
     rateLimits: false,
     ralph: false,
@@ -338,12 +385,20 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     todos: true,
     permissionStatus: false,
     thinking: false,
+    thinkingFormat: 'text',
     sessionHealth: false,
     useBars: false,
     showCache: true,
     showCost: true,
+    maxOutputLines: 4,
+    safeMode: true,
   },
   focused: {
+    cwd: false,
+    cwdFormat: 'relative',
+    gitRepo: false,
+    gitBranch: false,
+    model: false,
     omcLabel: true,
     rateLimits: true,
     ralph: true,
@@ -353,18 +408,26 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     lastSkill: true,
     contextBar: true,
     agents: true,
-    agentsFormat: 'multiline', // Multi-line for rich visualization
-    agentsMaxLines: 3, // Show up to 3 agents
+    agentsFormat: 'multiline',
+    agentsMaxLines: 3,
     backgroundTasks: true,
     todos: true,
-    permissionStatus: false,  // Disabled: heuristic unreliable
+    permissionStatus: false,
     thinking: true,
+    thinkingFormat: 'text',
     sessionHealth: true,
     useBars: true,
     showCache: true,
     showCost: true,
+    maxOutputLines: 4,
+    safeMode: true,
   },
   full: {
+    cwd: false,
+    cwdFormat: 'relative',
+    gitRepo: false,
+    gitBranch: false,
+    model: false,
     omcLabel: true,
     rateLimits: true,
     ralph: true,
@@ -374,18 +437,26 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     lastSkill: true,
     contextBar: true,
     agents: true,
-    agentsFormat: 'multiline', // Multi-line with more details
-    agentsMaxLines: 10, // Show many agents in full mode
+    agentsFormat: 'multiline',
+    agentsMaxLines: 10,
     backgroundTasks: true,
     todos: true,
-    permissionStatus: false,  // Disabled: heuristic unreliable
+    permissionStatus: false,
     thinking: true,
+    thinkingFormat: 'text',
     sessionHealth: true,
     useBars: true,
     showCache: true,
     showCost: true,
+    maxOutputLines: 12,
+    safeMode: true,
   },
   opencode: {
+    cwd: false,
+    cwdFormat: 'relative',
+    gitRepo: false,
+    gitBranch: false,
+    model: false,
     omcLabel: true,
     rateLimits: false,
     ralph: true,
@@ -399,14 +470,22 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     agentsMaxLines: 0,
     backgroundTasks: false,
     todos: true,
-    permissionStatus: false,  // Disabled: heuristic unreliable
+    permissionStatus: false,
     thinking: true,
+    thinkingFormat: 'text',
     sessionHealth: true,
     useBars: false,
     showCache: true,
     showCost: true,
+    maxOutputLines: 4,
+    safeMode: true,
   },
   dense: {
+    cwd: false,
+    cwdFormat: 'relative',
+    gitRepo: false,
+    gitBranch: false,
+    model: false,
     omcLabel: true,
     rateLimits: true,
     ralph: true,
@@ -420,11 +499,14 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     agentsMaxLines: 5,
     backgroundTasks: true,
     todos: true,
-    permissionStatus: false,  // Disabled: heuristic unreliable
+    permissionStatus: false,
     thinking: true,
+    thinkingFormat: 'text',
     sessionHealth: true,
     useBars: true,
     showCache: true,
     showCost: true,
+    maxOutputLines: 6,
+    safeMode: true,
   },
 };

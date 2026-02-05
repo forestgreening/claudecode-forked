@@ -17,6 +17,7 @@ import type {
   CommandScope,
   ExecuteResult,
 } from './types.js';
+import { resolveLiveData } from './live-data.js';
 
 /** Get __dirname for ESM modules */
 const __filename = fileURLToPath(import.meta.url);
@@ -280,9 +281,10 @@ function formatCommandTemplate(cmd: CommandInfo, args: string): string {
   sections.push(`**Scope**: ${cmd.scope}\n`);
   sections.push('---\n');
 
-  // Resolve arguments in content
+  // Resolve arguments in content, then execute any live-data commands
   const resolvedContent = resolveArguments(cmd.content || '', args);
-  sections.push(resolvedContent.trim());
+  const injectedContent = resolveLiveData(resolvedContent);
+  sections.push(injectedContent.trim());
 
   if (args && !cmd.content?.includes('$ARGUMENTS')) {
     sections.push('\n\n---\n');

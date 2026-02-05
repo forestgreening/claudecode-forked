@@ -5,6 +5,7 @@
  */
 
 import type { HudRenderContext, HudConfig } from './types.js';
+import { DEFAULT_HUD_CONFIG } from './types.js';
 import { bold, dim } from './colors.js';
 import { renderRalph } from './elements/ralph.js';
 import { renderAgentsByFormat, renderAgentsMultiLine } from './elements/agents.js';
@@ -18,6 +19,9 @@ import { renderPermission } from './elements/permission.js';
 import { renderThinking } from './elements/thinking.js';
 import { renderSession } from './elements/session.js';
 import { renderAutopilot } from './elements/autopilot.js';
+import { renderCwd } from './elements/cwd.js';
+import { renderGitRepo, renderGitBranch } from './elements/git.js';
+import { renderModel } from './elements/model.js';
 import {
   getAnalyticsDisplay,
   renderAnalyticsLineWithConfig,
@@ -27,6 +31,23 @@ import {
   renderCacheEfficiency
 } from './analytics-display.js';
 import type { SessionHealth, HudElementConfig } from './types.js';
+
+/**
+ * Limit output lines to prevent input field shrinkage (Issue #222).
+ * Trims lines from the end while preserving the first (header) line.
+ *
+ * @param lines - Array of output lines
+ * @param maxLines - Maximum number of lines to output (uses DEFAULT_HUD_CONFIG if not specified)
+ * @returns Trimmed array of lines
+ */
+export function limitOutputLines(lines: string[], maxLines?: number): string[] {
+  const limit = Math.max(1, maxLines ?? DEFAULT_HUD_CONFIG.elements.maxOutputLines);
+  if (lines.length <= limit) {
+    return lines;
+  }
+  const truncatedCount = lines.length - limit + 1;
+  return [...lines.slice(0, limit - 1), `... (+${truncatedCount} lines)`];
+}
 
 /**
  * Render session health analytics respecting config toggles.
@@ -106,7 +127,34 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
       if (todos) lines.push(todos);
     }
 
-    return lines.join('\n');
+    return limitOutputLines(lines, config.elements.maxOutputLines).join('\n');
+  }
+
+  // Git info line (separate line above HUD)
+  const gitElements: string[] = [];
+
+  // Working directory
+  if (enabledElements.cwd) {
+    const cwdElement = renderCwd(context.cwd, enabledElements.cwdFormat || 'relative');
+    if (cwdElement) gitElements.push(cwdElement);
+  }
+
+  // Git repository name
+  if (enabledElements.gitRepo) {
+    const gitRepoElement = renderGitRepo(context.cwd);
+    if (gitRepoElement) gitElements.push(gitRepoElement);
+  }
+
+  // Git branch
+  if (enabledElements.gitBranch) {
+    const gitBranchElement = renderGitBranch(context.cwd);
+    if (gitBranchElement) gitElements.push(gitBranchElement);
+  }
+
+  // Model name
+  if (enabledElements.model && context.modelName) {
+    const modelElement = renderModel(context.modelName);
+    if (modelElement) gitElements.push(modelElement);
   }
 
   // [OMC] label
@@ -130,7 +178,7 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
 
   // Extended thinking indicator
   if (enabledElements.thinking && context.thinkingState) {
-    const thinking = renderThinking(context.thinkingState);
+    const thinking = renderThinking(context.thinkingState, enabledElements.thinkingFormat || 'text');
     if (thinking) elements.push(thinking);
   }
 
@@ -216,9 +264,18 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
   }
 
   // Compose output
-  const headerLine = elements.join(dim(' | '));
+  const outputLines: string[] = [];
 
-  // Todos on second line (if available)
+  // Git info line (separate line above HUD header)
+  if (gitElements.length > 0) {
+    outputLines.push(gitElements.join(dim(' | ')));
+  }
+
+  // HUD header line
+  const headerLine = elements.join(dim(' | '));
+  outputLines.push(headerLine);
+
+  // Todos on next line (if available)
   if (enabledElements.todos) {
     const todos = renderTodosWithCurrent(context.todos);
     if (todos) detailLines.push(todos);
@@ -240,10 +297,5 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
     }
   }
 
-  // If we have detail lines, output multi-line
-  if (detailLines.length > 0) {
-    return [headerLine, ...detailLines].join('\n');
-  }
-
-  return headerLine;
+  return limitOutputLines([...outputLines, ...detailLines], config.elements.maxOutputLines).join('\n');
 }

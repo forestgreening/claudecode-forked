@@ -6,17 +6,32 @@
  * Cross-platform: Windows, macOS, Linux
  */
 
-import { existsSync, readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 
-// Read all stdin
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf-8');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Import timeout-protected stdin reader (prevents hangs on Linux, see issue #240)
+let readStdin;
+try {
+  const mod = await import(join(__dirname, 'lib', 'stdin.mjs'));
+  readStdin = mod.readStdin;
+} catch {
+  // Fallback: inline timeout-protected readStdin if lib module is missing
+  readStdin = (timeoutMs = 5000) => new Promise((resolve) => {
+    const chunks = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) { settled = true; process.stdin.removeAllListeners(); process.stdin.destroy(); resolve(Buffer.concat(chunks).toString('utf-8')); }
+    }, timeoutMs);
+    process.stdin.on('data', (chunk) => { chunks.push(chunk); });
+    process.stdin.on('end', () => { if (!settled) { settled = true; clearTimeout(timeout); resolve(Buffer.concat(chunks).toString('utf-8')); } });
+    process.stdin.on('error', () => { if (!settled) { settled = true; clearTimeout(timeout); resolve(''); } });
+    if (process.stdin.readableEnded) { if (!settled) { settled = true; clearTimeout(timeout); resolve(Buffer.concat(chunks).toString('utf-8')); } }
+  });
 }
 
 // Read JSON file safely
@@ -29,44 +44,55 @@ function readJsonFile(path) {
   }
 }
 
-// Count incomplete todos
-function countIncompleteTodos(todosDir) {
-  let count = 0;
-  if (existsSync(todosDir)) {
-    try {
-      const files = readdirSync(todosDir).filter(f => f.endsWith('.json'));
-      for (const file of files) {
-        const todos = readJsonFile(join(todosDir, file));
-        if (Array.isArray(todos)) {
-          count += todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled').length;
-        }
-      }
-    } catch {}
-  }
-  return count;
-}
-
-// Check if HUD is properly installed
-function checkHudInstallation() {
-  const hudScript = join(homedir(), '.claude', 'hud', 'omc-hud.mjs');
+// Check if HUD is properly installed (with retry for race conditions)
+async function checkHudInstallation(retryCount = 0) {
+  const hudDir = join(homedir(), '.claude', 'hud');
+  // Support both legacy (sisyphus-hud.mjs) and current (omc-hud.mjs) naming
+  const hudScriptOmc = join(hudDir, 'omc-hud.mjs');
+  const hudScriptSisyphus = join(hudDir, 'sisyphus-hud.mjs');
   const settingsFile = join(homedir(), '.claude', 'settings.json');
 
-  // Check if HUD script exists
-  if (!existsSync(hudScript)) {
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 100;
+
+  // Check if HUD script exists (either naming convention)
+  const hudScriptExists = existsSync(hudScriptOmc) || existsSync(hudScriptSisyphus);
+  if (!hudScriptExists) {
     return { installed: false, reason: 'HUD script missing' };
   }
 
-  // Check if statusLine is configured
+  // Check if statusLine is configured (with retry for race conditions)
   try {
     if (existsSync(settingsFile)) {
-      const settings = JSON.parse(readFileSync(settingsFile, 'utf-8'));
+      const content = readFileSync(settingsFile, 'utf-8');
+      // Handle empty or whitespace-only content (race condition during write)
+      if (!content || !content.trim()) {
+        if (retryCount < MAX_RETRIES) {
+          // Sleep and retry (non-blocking)
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+          return checkHudInstallation(retryCount + 1);
+        }
+        return { installed: false, reason: 'settings.json empty (possible race condition)' };
+      }
+      const settings = JSON.parse(content);
       if (!settings.statusLine) {
+        // Retry once if statusLine not found (could be mid-write)
+        if (retryCount < MAX_RETRIES) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+          return checkHudInstallation(retryCount + 1);
+        }
         return { installed: false, reason: 'statusLine not configured' };
       }
     } else {
       return { installed: false, reason: 'settings.json missing' };
     }
-  } catch {
+  } catch (err) {
+    // JSON parse error - could be mid-write, retry
+    if (retryCount < MAX_RETRIES) {
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+      return checkHudInstallation(retryCount + 1);
+    }
+    console.error('HUD check error:', err.message);
     return { installed: false, reason: 'Could not read settings' };
   }
 
@@ -81,21 +107,22 @@ async function main() {
     try { data = JSON.parse(input); } catch {}
 
     const directory = data.directory || process.cwd();
+    const sessionId = data.sessionId || data.session_id || '';
     const messages = [];
 
     // Check HUD installation (one-time setup guidance)
-    const hudCheck = checkHudInstallation();
+    const hudCheck = await checkHudInstallation();
     if (!hudCheck.installed) {
       messages.push(`<system-reminder>
 [Sisyphus] HUD not configured (${hudCheck.reason}). Run /hud setup then restart Claude Code.
 </system-reminder>`);
     }
 
-    // Check for ultrawork state
+    // Check for ultrawork state - only restore if session matches (issue #311)
     const ultraworkState = readJsonFile(join(directory, '.omc', 'state', 'ultrawork-state.json'))
       || readJsonFile(join(homedir(), '.omc', 'state', 'ultrawork-state.json'));
 
-    if (ultraworkState?.active) {
+    if (ultraworkState?.active && (!ultraworkState.session_id || ultraworkState.session_id === sessionId)) {
       messages.push(`<session-restore>
 
 [ULTRAWORK MODE RESTORED]
@@ -112,7 +139,7 @@ Continue working in ultrawork mode until all tasks are complete.
     }
 
     // Check for ralph loop state
-    const ralphState = readJsonFile(join(directory, '.omc', 'state', 'ralph-state.json'));
+    const ralphState = readJsonFile(join(directory, '.omc', 'ralph-state.json'));
     if (ralphState?.active) {
       messages.push(`<session-restore>
 
@@ -130,9 +157,24 @@ Continue working until the task is verified complete.
 `);
     }
 
-    // Check for incomplete todos
-    const todosDir = join(homedir(), '.claude', 'todos');
-    const incompleteCount = countIncompleteTodos(todosDir);
+    // Check for incomplete todos (project-local only, not global ~/.claude/todos/)
+    // NOTE: We intentionally do NOT scan the global ~/.claude/todos/ directory.
+    // That directory accumulates todo files from ALL past sessions across all
+    // projects, causing phantom task counts in fresh sessions (see issue #354).
+    const localTodoPaths = [
+      join(directory, '.omc', 'todos.json'),
+      join(directory, '.claude', 'todos.json')
+    ];
+    let incompleteCount = 0;
+    for (const todoFile of localTodoPaths) {
+      if (existsSync(todoFile)) {
+        try {
+          const data = readJsonFile(todoFile);
+          const todos = data?.todos || (Array.isArray(data) ? data : []);
+          incompleteCount += todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled').length;
+        } catch {}
+      }
+    }
 
     if (incompleteCount > 0) {
       messages.push(`<session-restore>

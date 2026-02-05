@@ -28,7 +28,6 @@ export {
   clearRalphState,
   clearLinkedUltraworkState,
   incrementRalphIteration,
-  detectCompletionPromise,
   isUltraQAActive,
   // PRD Integration
   hasPrd,
@@ -743,6 +742,18 @@ export {
 } from './setup/index.js';
 
 export {
+  // Beads Context
+  getBeadsInstructions,
+  getBeadsContextConfig,
+  registerBeadsContext,
+  clearBeadsContext,
+  BEADS_INSTRUCTIONS,
+  BEADS_RUST_INSTRUCTIONS,
+  type TaskTool,
+  type BeadsContextConfig
+} from './beads-context/index.js';
+
+export {
   // Subagent Tracker Hook
   processSubagentStart,
   processSubagentStop,
@@ -801,30 +812,37 @@ export {
 } from './session-end/index.js';
 
 export {
-  // Clear Suggestions
-  createClearSuggestionHook,
-  checkClearSuggestion,
-  markPlanningComplete,
-  resetClearSuggestionState,
-  getClearSuggestionStats,
-  cleanupStaleSessions,
-  discoverPreservedArtifacts,
-  isToolFailure,
-  checkModeJustCompleted,
-  checkArchitectJustVerified,
-  detectWorkflowComplete,
-  detectArchitectVerified,
-  detectPlanningComplete,
-  detectContextWithArtifacts,
-  detectDegradationSignals,
-  CLEAR_SUGGESTION_COOLDOWN_MS,
-  MAX_CLEAR_SUGGESTIONS,
-  CONTEXT_THRESHOLD as CLEAR_CONTEXT_THRESHOLD,
-  FAILURE_THRESHOLD as CLEAR_FAILURE_THRESHOLD,
-  type ClearSuggestionTrigger,
-  type ClearSuggestionState,
-  type ClearSuggestionConfig,
-  type ClearSuggestionResult,
-  type ClearSuggestionInput,
-  type PreservedArtifact
-} from './clear-suggestions/index.js';
+  // Project Memory Hook
+  registerProjectMemoryContext,
+  clearProjectMemorySession,
+  rescanProjectEnvironment,
+  loadProjectMemory,
+  saveProjectMemory,
+  detectProjectEnvironment,
+  formatContextSummary,
+  formatFullContext,
+  learnFromToolOutput,
+  addCustomNote,
+  processPreCompact as processProjectMemoryPreCompact,
+  mapDirectoryStructure,
+  updateDirectoryAccess,
+  trackAccess,
+  getTopHotPaths,
+  decayHotPaths,
+  detectDirectivesFromMessage,
+  addDirective,
+  formatDirectivesForContext,
+  type ProjectMemory,
+  type TechStack,
+  type BuildInfo,
+  type CodeConventions,
+  type ProjectStructure,
+  type LanguageDetection,
+  type FrameworkDetection,
+  type GitBranchPattern,
+  type CustomNote,
+  type DirectoryInfo,
+  type HotPath,
+  type UserDirective
+} from './project-memory/index.js';
+

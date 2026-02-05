@@ -8,7 +8,6 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 
 export interface UltraworkState {
   /** Whether ultrawork mode is currently active */
@@ -19,6 +18,8 @@ export interface UltraworkState {
   original_prompt: string;
   /** Session ID the mode is bound to */
   session_id?: string;
+  /** Project path for isolation */
+  project_path?: string;
   /** Number of times the mode has been reinforced (for metrics) */
   reinforcement_count: number;
   /** Last time the mode was checked/reinforced */
@@ -44,12 +45,6 @@ function getStateFilePath(directory?: string): string {
   return join(omcDir, 'state', 'ultrawork-state.json');
 }
 
-/**
- * Get global state file path (for cross-session persistence)
- */
-function getGlobalStateFilePath(): string {
-  return join(homedir(), '.claude', 'ultrawork-state.json');
-}
 
 /**
  * Ensure the .omc/state directory exists
@@ -62,38 +57,18 @@ function ensureStateDir(directory?: string): void {
   }
 }
 
-/**
- * Ensure the ~/.claude directory exists
- */
-function ensureGlobalStateDir(): void {
-  const claudeDir = join(homedir(), '.claude');
-  if (!existsSync(claudeDir)) {
-    mkdirSync(claudeDir, { recursive: true });
-  }
-}
 
 /**
- * Read Ultrawork state from disk (checks both local and global)
+ * Read Ultrawork state from disk (local only)
  */
 export function readUltraworkState(directory?: string): UltraworkState | null {
-  // Check local state first
   const localStateFile = getStateFilePath(directory);
   if (existsSync(localStateFile)) {
     try {
       const content = readFileSync(localStateFile, 'utf-8');
       return JSON.parse(content);
-    } catch {
-      // Fall through to global check
-    }
-  }
-
-  // Check global state
-  const globalStateFile = getGlobalStateFilePath();
-  if (existsSync(globalStateFile)) {
-    try {
-      const content = readFileSync(globalStateFile, 'utf-8');
-      return JSON.parse(content);
-    } catch {
+    } catch (error) {
+      console.error('[ultrawork] Failed to read state file:', error);
       return null;
     }
   }
@@ -102,20 +77,13 @@ export function readUltraworkState(directory?: string): UltraworkState | null {
 }
 
 /**
- * Write Ultrawork state to disk (both local and global for redundancy)
+ * Write Ultrawork state to disk (local only)
  */
 export function writeUltraworkState(state: UltraworkState, directory?: string): boolean {
   try {
-    // Write to local .omc
     ensureStateDir(directory);
     const localStateFile = getStateFilePath(directory);
-    writeFileSync(localStateFile, JSON.stringify(state, null, 2));
-
-    // Write to global ~/.claude for cross-session persistence
-    ensureGlobalStateDir();
-    const globalStateFile = getGlobalStateFilePath();
-    writeFileSync(globalStateFile, JSON.stringify(state, null, 2));
-
+    writeFileSync(localStateFile, JSON.stringify(state, null, 2), { mode: 0o600 });
     return true;
   } catch {
     return false;
@@ -136,6 +104,7 @@ export function activateUltrawork(
     started_at: new Date().toISOString(),
     original_prompt: prompt,
     session_id: sessionId,
+    project_path: directory || process.cwd(),
     reinforcement_count: 0,
     last_checked_at: new Date().toISOString(),
     linked_to_ralph: linkedToRalph
@@ -148,21 +117,10 @@ export function activateUltrawork(
  * Deactivate ultrawork mode
  */
 export function deactivateUltrawork(directory?: string): boolean {
-  // Remove local state
   const localStateFile = getStateFilePath(directory);
   if (existsSync(localStateFile)) {
     try {
       unlinkSync(localStateFile);
-    } catch {
-      // Continue to global cleanup
-    }
-  }
-
-  // Remove global state
-  const globalStateFile = getGlobalStateFilePath();
-  if (existsSync(globalStateFile)) {
-    try {
-      unlinkSync(globalStateFile);
       return true;
     } catch {
       return false;
@@ -205,8 +163,10 @@ export function shouldReinforceUltrawork(
     return false;
   }
 
-  // If bound to a session, only reinforce for that session
-  if (state.session_id && sessionId && state.session_id !== sessionId) {
+  // Strict session isolation: state must match the requesting session
+  // Both must be defined and equal - prevent cross-session contamination
+  // when both are undefined (Bug #5 fix)
+  if (!state.session_id || !sessionId || state.session_id !== sessionId) {
     return false;
   }
 

@@ -10,10 +10,11 @@
  * - Configurable update notifications
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir, tmpdir } from 'os';
+import { homedir } from 'os';
 import { execSync } from 'child_process';
+import { TaskTool } from '../hooks/beads-context/types.js';
 
 /** GitHub repository information */
 export const REPO_OWNER = 'Yeachan-Heo';
@@ -36,6 +37,26 @@ export interface SisyphusConfig {
   configuredAt?: string;
   /** Configuration schema version */
   configVersion?: number;
+  /** Preferred task management tool */
+  taskTool?: TaskTool;
+  /** Configuration for the selected task tool */
+  taskToolConfig?: {
+    /** Use beads-mcp instead of CLI */
+    useMcp?: boolean;
+    /** Inject usage instructions at session start (default: true) */
+    injectInstructions?: boolean;
+  };
+  /** Preferred execution mode for parallel work (set by omc-setup Step 3.7) */
+  defaultExecutionMode?: 'ultrawork' | 'ecomode';
+  /** Ecomode-specific configuration */
+  ecomode?: {
+    /** Whether ecomode is enabled (default: true). Set to false to disable ecomode completely. */
+    enabled?: boolean;
+  };
+  /** Whether initial setup has been completed (ISO timestamp) */
+  setupCompleted?: string;
+  /** Version of setup wizard that was completed */
+  setupVersion?: string;
 }
 
 /**
@@ -53,7 +74,13 @@ export function getSisyphusConfig(): SisyphusConfig {
     return {
       silentAutoUpdate: config.silentAutoUpdate ?? false,
       configuredAt: config.configuredAt,
-      configVersion: config.configVersion
+      configVersion: config.configVersion,
+      taskTool: config.taskTool,
+      taskToolConfig: config.taskToolConfig,
+      defaultExecutionMode: config.defaultExecutionMode,
+      ecomode: config.ecomode,
+      setupCompleted: config.setupCompleted,
+      setupVersion: config.setupVersion,
     };
   } catch {
     // If config file is invalid, default to disabled for security
@@ -66,6 +93,16 @@ export function getSisyphusConfig(): SisyphusConfig {
  */
 export function isSilentAutoUpdateEnabled(): boolean {
   return getSisyphusConfig().silentAutoUpdate;
+}
+
+/**
+ * Check if ecomode is enabled
+ * Returns true by default if not explicitly disabled
+ */
+export function isEcomodeEnabled(): boolean {
+  const config = getSisyphusConfig();
+  // Default to true if not configured
+  return config.ecomode?.enabled !== false;
 }
 
 /**
@@ -283,79 +320,22 @@ export async function performUpdate(options?: {
     const release = await fetchLatestRelease();
     const newVersion = release.tag_name.replace(/^v/, '');
 
-    // Download the install script
-    const installScriptUrl = `${GITHUB_RAW_URL}/main/scripts/install.sh`;
-    const response = await fetch(installScriptUrl);
-
-    if (!response.ok) {
-      throw new Error(`Failed to download install script: ${response.status}`);
-    }
-
-    const scriptContent = await response.text();
-
-    // Save to a temporary file
-    const tempDir = tmpdir();
-    const tempScript = join(tempDir, `omc-update-${Date.now()}.sh`);
-
-    writeFileSync(tempScript, scriptContent, { mode: 0o755 });
-
-    // Execute the install script (platform-aware)
+    // Use npm for updates on all platforms (install.sh was removed)
     try {
-      const isWindows = process.platform === 'win32';
-
-      if (isWindows) {
-        // Use npm for Windows updates instead of bash script
-        try {
-          execSync('npm install -g oh-my-claude-sisyphus@latest', {
-            encoding: 'utf-8',
-            stdio: options?.verbose ? 'inherit' : 'pipe',
-            timeout: 120000, // 2 minute timeout for npm
-            windowsHide: true
-          });
-
-          // Update version metadata for npm install
-          saveVersionMetadata({
-            version: newVersion,
-            installedAt: new Date().toISOString(),
-            installMethod: 'npm',
-            lastCheckAt: new Date().toISOString()
-          });
-
-          return {
-            success: true,
-            previousVersion,
-            newVersion,
-            message: `Successfully updated from ${previousVersion ?? 'unknown'} to ${newVersion} via npm`
-          };
-        } catch (npmError) {
-          throw new Error(
-            'Auto-update via npm failed. Please run manually:\n' +
-            '  npm install -g oh-my-claude-sisyphus@latest\n' +
-            `Error: ${npmError instanceof Error ? npmError.message : npmError}`
-          );
-        }
-      }
-
-      execSync(`bash "${tempScript}"`, {
+      execSync('npm install -g oh-my-claude-sisyphus@latest', {
         encoding: 'utf-8',
         stdio: options?.verbose ? 'inherit' : 'pipe',
-        timeout: 60000 // 1 minute timeout
+        timeout: 120000, // 2 minute timeout for npm
+        ...(process.platform === 'win32' ? { windowsHide: true } : {})
       });
 
       // Update version metadata
       saveVersionMetadata({
         version: newVersion,
         installedAt: new Date().toISOString(),
-        installMethod: 'script',
+        installMethod: 'npm',
         lastCheckAt: new Date().toISOString()
       });
-
-      // Clean up temp file
-      try {
-        unlinkSync(tempScript);
-      } catch {
-        // Ignore cleanup errors
-      }
 
       return {
         success: true,
@@ -363,14 +343,13 @@ export async function performUpdate(options?: {
         newVersion,
         message: `Successfully updated from ${previousVersion ?? 'unknown'} to ${newVersion}`
       };
-    } catch (error) {
-      // Clean up temp file on error too
-      try {
-        unlinkSync(tempScript);
-      } catch {
-        // Ignore cleanup errors
-      }
-      throw error;
+    } catch (npmError) {
+      throw new Error(
+        'Auto-update via npm failed. Please run manually:\n' +
+        '  npm install -g oh-my-claude-sisyphus@latest\n' +
+        'Or use: /plugin install oh-my-claudecode\n' +
+        `Error: ${npmError instanceof Error ? npmError.message : npmError}`
+      );
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -401,7 +380,7 @@ export function formatUpdateNotification(checkResult: UpdateCheckResult): string
     `  Latest version:  ${checkResult.latestVersion}`,
     '',
     '  To update, run: /update',
-    '  Or run: curl -fsSL https://raw.githubusercontent.com/Yeachan-Heo/oh-my-claudecode/main/scripts/install.sh | bash',
+    '  Or reinstall via: /plugin install oh-my-claudecode',
     ''
   ];
 

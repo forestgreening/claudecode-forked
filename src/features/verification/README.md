@@ -131,7 +131,7 @@ if (validation.valid) {
 ## Integration
 
 ### Ralph Loop
-Ralph uses the verification protocol to ensure task completion before outputting the promise token:
+Ralph uses the verification protocol to ensure task completion before exiting.
 
 ```typescript
 const protocol = createProtocol('ralph', 'Ralph completion verification', [
@@ -146,7 +146,8 @@ const checklist = createChecklist(protocol);
 await runVerification(checklist);
 
 if (checklist.summary?.verdict === 'approved') {
-  console.log('<promise>TASK_COMPLETE</promise>');
+  // All checks passed - use cancel to cleanly exit
+  console.log('[RALPH VERIFIED] Run /oh-my-claudecode:cancel to exit.');
 }
 ```
 

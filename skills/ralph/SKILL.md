@@ -76,7 +76,7 @@ Your workflow:
 
 ## ULTRAWORK MODE (AUTO-ACTIVATED)
 
-Ralph automatically activates Ultrawork for maximum parallel execution. You MUST follow these rules:
+Ralph is a **persistence wrapper** that includes Ultrawork as a component for maximum parallel execution. You MUST follow these rules:
 
 ### Parallel Execution Rules
 - **PARALLEL**: Fire independent calls simultaneously - NEVER wait sequentially
@@ -93,23 +93,11 @@ Ralph automatically activates Ultrawork for maximum parallel execution. You MUST
 
 ### Available Agents by Tier
 
-| Domain | LOW (Haiku) | MEDIUM (Sonnet) | HIGH (Opus) |
-|--------|-------------|-----------------|-------------|
-| **Analysis** | `architect-low` | `architect-medium` | `architect` |
-| **Execution** | `executor-low` | `executor` | `executor-high` |
-| **Search** | `explore` | `explore-medium` | - |
-| **Research** | `researcher-low` | `researcher` | - |
-| **Frontend** | `designer-low` | `designer` | `designer-high` |
-| **Docs** | `writer` | - | - |
-| **Visual** | - | `vision` | - |
-| **Planning** | - | - | `planner` |
-| **Critique** | - | - | `critic` |
-| **Pre-Planning** | - | - | `analyst` |
-| **Testing** | - | `qa-tester` | - |
-| **Security** | `security-reviewer-low` | - | `security-reviewer` |
-| **Build** | `build-fixer-low` | `build-fixer` | - |
-| **TDD** | `tdd-guide-low` | `tdd-guide` | - |
-| **Code Review** | `code-reviewer-low` | - | `code-reviewer` |
+**FIRST ACTION:** Before delegating any work, read the agent reference file:
+```
+Read file: docs/shared/agent-tiers.md
+```
+This provides the complete agent tier matrix, MCP tool assignments, and selection guidance.
 
 **CRITICAL: Always pass `model` parameter explicitly!**
 ```
@@ -121,9 +109,9 @@ Task(subagent_type="oh-my-claudecode:architect", model="opus", prompt="...")
 ### Background Execution Rules
 
 **Run in Background** (set `run_in_background: true`):
-- Package installation: npm install, pip install, cargo build
-- Build processes: npm run build, make, tsc
-- Test suites: npm test, pytest, cargo test
+- Package installation (npm install, pip install, cargo build, etc.)
+- Build processes (project build command, make, etc.)
+- Test suites (project test command, etc.)
 - Docker operations: docker build, docker pull
 
 **Run Blocking** (foreground):
@@ -166,20 +154,46 @@ Before outputting the completion promise:
 
 **Skipping verification = Task NOT complete**
 
-## ARCHITECT VERIFICATION (MANDATORY)
+## VERIFICATION PROTOCOL (TIERED)
 
-When you believe the task is complete:
-1. **First**, spawn Architect to verify your work (ALWAYS pass model explicitly!):
+Ralph uses tiered verification to save tokens while maintaining quality.
+
+### Verification Tier Selection
+
+Before spawning architect for verification, determine the appropriate tier:
+
+| Change Profile | Tier | Agent |
+|----------------|------|-------|
+| <5 files, <100 lines, full tests | LIGHT | architect-low (haiku) |
+| Standard changes | STANDARD | architect-medium (sonnet) |
+| >20 files, security/architectural | THOROUGH | architect (opus) |
+
+### Ralph Minimum Verification Tier
+
+**Floor: STANDARD (architect-medium / sonnet)**
+
+Even for small changes (<5 files), ralph requires at least STANDARD tier verification. The LIGHT tier (haiku) is insufficient for ralph's completion guarantee. When tier selection returns LIGHT, upgrade to STANDARD.
+
+### Verification Flow
+
+1. **Collect change metadata**: Count files, lines, detect security/architectural patterns
+2. **Select tier**: Apply rules from `/docs/shared/verification-tiers.md`
+3. **Spawn appropriate architect**:
    ```
-   Task(subagent_type="oh-my-claudecode:architect", model="opus", prompt="Verify this implementation is complete: [describe what you did]")
+   // LIGHT - small, well-tested changes
+   Task(subagent_type="oh-my-claudecode:architect-low", model="haiku", prompt="Quick verification: [describe changes]")
+
+   // STANDARD - most changes
+   Task(subagent_type="oh-my-claudecode:architect-medium", model="sonnet", prompt="Verify implementation: [describe changes]")
+
+   // THOROUGH - large/security/architectural changes
+   Task(subagent_type="oh-my-claudecode:architect", model="opus", prompt="Full verification: [describe changes]")
    ```
+4. **Wait for verdict**
+5. **If approved**: Run `/oh-my-claudecode:cancel` to cleanly exit
+6. **If rejected**: Fix issues and re-verify (same tier)
 
-2. **Wait for Architect's assessment**
-
-3. **If Architect approves**: Output `<promise>{{PROMISE}}</promise>`
-4. **If Architect finds issues**: Fix them, then repeat verification
-
-DO NOT output the completion promise without Architect verification.
+For complete tier selection rules, read: `docs/shared/verification-tiers.md`
 
 ## ZERO TOLERANCE
 
@@ -190,31 +204,21 @@ DO NOT output the completion promise without Architect verification.
 
 ## STATE CLEANUP ON COMPLETION
 
-**IMPORTANT: Delete state files on successful completion - do NOT just set `active: false`**
+**IMPORTANT: Use the cancel skill for proper state cleanup**
 
-When outputting the completion promise after Architect verification:
+When work is complete and Architect verification passes, run `/oh-my-claudecode:cancel` to cleanly exit ralph mode. This handles:
+- Deletion of ralph state files (both local and global)
+- Cleanup of linked ultrawork or ecomode state
+- Proper termination of the ralph loop
 
-```bash
-# Delete ralph state file (and linked ultrawork if applicable)
-rm -f .omc/state/ralph-state.json
-rm -f .omc/state/ralph-verification.json
-rm -f ~/.claude/ralph-state.json
-
-# If ultrawork was linked, delete it too
-rm -f .omc/state/ultrawork-state.json
-rm -f ~/.claude/ultrawork-state.json
-```
-
-This ensures clean state for future sessions. Stale state files with `active: false` should not be left behind.
+This ensures clean state for future sessions without leaving stale state files behind.
 
 ## INSTRUCTIONS
 
 - Review your progress so far
 - Continue from where you left off
 - Use parallel execution and background tasks
-- When FULLY complete AND Architect verified:
-  1. Clean up state files (delete ralph-state.json, ultrawork-state.json)
-  2. Output: <promise>{{PROMISE}}</promise>
+- When FULLY complete AND Architect verified: Run `/oh-my-claudecode:cancel` to cleanly exit and clean up all state files
 - Do not stop until the task is truly done
 
 Original task:

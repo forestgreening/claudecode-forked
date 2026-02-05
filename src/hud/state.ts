@@ -25,15 +25,16 @@ function getLocalStateFilePath(directory?: string): string {
   return join(omcStateDir, 'hud-state.json');
 }
 
+
 /**
- * Get global HUD state file path (for cross-session persistence)
+ * Get Claude Code settings.json path
  */
-function getGlobalStateFilePath(): string {
-  return join(homedir(), '.claude', 'hud-state.json');
+function getSettingsFilePath(): string {
+  return join(homedir(), '.claude', 'settings.json');
 }
 
 /**
- * Get the HUD config file path
+ * Get the HUD config file path (legacy)
  */
 function getConfigFilePath(): string {
   return join(homedir(), '.claude', '.omc', 'hud-config.json');
@@ -50,32 +51,14 @@ function ensureStateDir(directory?: string): void {
   }
 }
 
-/**
- * Ensure the ~/.claude/.omc directory exists
- */
-function ensureGlobalConfigDir(): void {
-  const configDir = join(homedir(), '.claude', '.omc');
-  if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true });
-  }
-}
 
-/**
- * Ensure the ~/.claude directory exists
- */
-function ensureGlobalStateDir(): void {
-  const claudeDir = join(homedir(), '.claude');
-  if (!existsSync(claudeDir)) {
-    mkdirSync(claudeDir, { recursive: true });
-  }
-}
 
 // ============================================================================
 // HUD State Operations
 // ============================================================================
 
 /**
- * Read HUD state from disk (checks new local, legacy local, then global)
+ * Read HUD state from disk (checks new local and legacy local only)
  */
 export function readHudState(directory?: string): OmcHudState | null {
   // Check new local state first (.omc/state/hud-state.json)
@@ -97,17 +80,6 @@ export function readHudState(directory?: string): OmcHudState | null {
       const content = readFileSync(legacyStateFile, 'utf-8');
       return JSON.parse(content);
     } catch {
-      // Fall through to global check
-    }
-  }
-
-  // Check global state
-  const globalStateFile = getGlobalStateFilePath();
-  if (existsSync(globalStateFile)) {
-    try {
-      const content = readFileSync(globalStateFile, 'utf-8');
-      return JSON.parse(content);
-    } catch {
       return null;
     }
   }
@@ -116,22 +88,17 @@ export function readHudState(directory?: string): OmcHudState | null {
 }
 
 /**
- * Write HUD state to disk (both local and global for redundancy)
+ * Write HUD state to disk (local only)
  */
 export function writeHudState(
   state: OmcHudState,
   directory?: string
 ): boolean {
   try {
-    // Write to local .omc
+    // Write to local .omc/state only
     ensureStateDir(directory);
     const localStateFile = getLocalStateFilePath(directory);
     writeFileSync(localStateFile, JSON.stringify(state, null, 2));
-
-    // Write to global ~/.claude for cross-session persistence
-    ensureGlobalStateDir();
-    const globalStateFile = getGlobalStateFilePath();
-    writeFileSync(globalStateFile, JSON.stringify(state, null, 2));
 
     return true;
   } catch {
@@ -176,43 +143,76 @@ export function getBackgroundTaskCount(state: OmcHudState | null): {
 // ============================================================================
 
 /**
- * Read HUD configuration from disk
+ * Read HUD configuration from disk.
+ * Priority: settings.json > hud-config.json (legacy) > defaults
  */
 export function readHudConfig(): HudConfig {
+  // 1. Try reading from ~/.claude/settings.json (omcHud key)
+  const settingsFile = getSettingsFilePath();
+  if (existsSync(settingsFile)) {
+    try {
+      const content = readFileSync(settingsFile, 'utf-8');
+      const settings = JSON.parse(content);
+      if (settings.omcHud) {
+        const config = settings.omcHud as Partial<HudConfig>;
+        return mergeWithDefaults(config);
+      }
+    } catch {
+      // Fall through to legacy config
+    }
+  }
+
+  // 2. Try reading from ~/.claude/.omc/hud-config.json (legacy)
   const configFile = getConfigFilePath();
-  if (!existsSync(configFile)) {
-    return DEFAULT_HUD_CONFIG;
+  if (existsSync(configFile)) {
+    try {
+      const content = readFileSync(configFile, 'utf-8');
+      const config = JSON.parse(content) as Partial<HudConfig>;
+      return mergeWithDefaults(config);
+    } catch {
+      // Fall through to defaults
+    }
   }
 
-  try {
-    const content = readFileSync(configFile, 'utf-8');
-    const config = JSON.parse(content) as Partial<HudConfig>;
-
-    // Merge with defaults to ensure all fields exist
-    return {
-      preset: config.preset ?? DEFAULT_HUD_CONFIG.preset,
-      elements: {
-        ...DEFAULT_HUD_CONFIG.elements,
-        ...config.elements,
-      },
-      thresholds: {
-        ...DEFAULT_HUD_CONFIG.thresholds,
-        ...config.thresholds,
-      },
-    };
-  } catch {
-    return DEFAULT_HUD_CONFIG;
-  }
+  // 3. Return defaults
+  return DEFAULT_HUD_CONFIG;
 }
 
 /**
- * Write HUD configuration to disk
+ * Merge partial config with defaults
+ */
+function mergeWithDefaults(config: Partial<HudConfig>): HudConfig {
+  return {
+    preset: config.preset ?? DEFAULT_HUD_CONFIG.preset,
+    elements: {
+      ...DEFAULT_HUD_CONFIG.elements,
+      ...config.elements,
+    },
+    thresholds: {
+      ...DEFAULT_HUD_CONFIG.thresholds,
+      ...config.thresholds,
+    },
+    staleTaskThresholdMinutes: config.staleTaskThresholdMinutes ?? DEFAULT_HUD_CONFIG.staleTaskThresholdMinutes,
+  };
+}
+
+/**
+ * Write HUD configuration to ~/.claude/settings.json (omcHud key)
  */
 export function writeHudConfig(config: HudConfig): boolean {
   try {
-    ensureGlobalConfigDir();
-    const configFile = getConfigFilePath();
-    writeFileSync(configFile, JSON.stringify(config, null, 2));
+    const settingsFile = getSettingsFilePath();
+    let settings: Record<string, unknown> = {};
+
+    // Read existing settings
+    if (existsSync(settingsFile)) {
+      const content = readFileSync(settingsFile, 'utf-8');
+      settings = JSON.parse(content);
+    }
+
+    // Update omcHud key
+    settings.omcHud = config;
+    writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
     return true;
   } catch {
     return false;

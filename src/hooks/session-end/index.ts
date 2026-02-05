@@ -211,6 +211,86 @@ export function cleanupTransientState(directory: string): number {
 }
 
 /**
+ * Mode state files that should be cleaned up on session end.
+ * These files track active execution modes that should not persist across sessions.
+ */
+const MODE_STATE_FILES = [
+  { file: 'autopilot-state.json', mode: 'autopilot' },
+  { file: 'ultrapilot-state.json', mode: 'ultrapilot' },
+  { file: 'ralph-state.json', mode: 'ralph' },
+  { file: 'ultrawork-state.json', mode: 'ultrawork' },
+  { file: 'ecomode-state.json', mode: 'ecomode' },
+  { file: 'ultraqa-state.json', mode: 'ultraqa' },
+  { file: 'pipeline-state.json', mode: 'pipeline' },
+  // Swarm uses marker file + SQLite
+  { file: 'swarm-active.marker', mode: 'swarm' },
+  { file: 'swarm-summary.json', mode: 'swarm' },
+];
+
+/**
+ * Clean up mode state files on session end.
+ *
+ * This prevents stale state from causing the stop hook to malfunction
+ * in subsequent sessions. When a session ends normally, all active modes
+ * should be considered terminated.
+ *
+ * @param directory - The project directory
+ * @param sessionId - Optional session ID to match. Only cleans states belonging to this session.
+ * @returns Object with counts of files removed and modes cleaned
+ */
+export function cleanupModeStates(directory: string, sessionId?: string): { filesRemoved: number; modesCleaned: string[] } {
+  let filesRemoved = 0;
+  const modesCleaned: string[] = [];
+  const stateDir = path.join(directory, '.omc', 'state');
+
+  if (!fs.existsSync(stateDir)) {
+    return { filesRemoved, modesCleaned };
+  }
+
+  for (const { file, mode } of MODE_STATE_FILES) {
+    const localPath = path.join(stateDir, file);
+
+    // Check if local state exists and is active
+    if (fs.existsSync(localPath)) {
+      try {
+        // For JSON files, check if active before removing
+        if (file.endsWith('.json')) {
+          const content = fs.readFileSync(localPath, 'utf-8');
+          const state = JSON.parse(content);
+
+          // Only clean if marked as active AND belongs to this session
+          // (prevents removing other concurrent sessions' states)
+          if (state.active === true) {
+            // If sessionId is provided, only clean matching states
+            // If state has no session_id, it's legacy - clean it
+            // If state.session_id matches our sessionId, clean it
+            const stateSessionId = state.session_id as string | undefined;
+            if (!sessionId || !stateSessionId || stateSessionId === sessionId) {
+              fs.unlinkSync(localPath);
+              filesRemoved++;
+              if (!modesCleaned.includes(mode)) {
+                modesCleaned.push(mode);
+              }
+            }
+          }
+        } else {
+          // For marker files, always remove
+          fs.unlinkSync(localPath);
+          filesRemoved++;
+          if (!modesCleaned.includes(mode)) {
+            modesCleaned.push(mode);
+          }
+        }
+      } catch {
+        // Ignore errors, continue with other files
+      }
+    }
+  }
+
+  return { filesRemoved, modesCleaned };
+}
+
+/**
  * Export session summary to .omc/sessions/
  */
 export function exportSessionSummary(directory: string, metrics: SessionMetrics): void {
@@ -241,6 +321,11 @@ export function processSessionEnd(input: SessionEndInput): HookOutput {
 
   // Clean up transient state files
   cleanupTransientState(input.cwd);
+
+  // Clean up mode state files to prevent stale state issues
+  // This ensures the stop hook won't malfunction in subsequent sessions
+  // Pass session_id to only clean up this session's states
+  cleanupModeStates(input.cwd, input.session_id);
 
   // Return simple response - metrics are persisted to .omc/sessions/
   return { continue: true };

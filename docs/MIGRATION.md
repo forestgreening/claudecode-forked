@@ -7,7 +7,7 @@ This guide covers all migration paths for oh-my-claudecode. Find your current ve
 ## Table of Contents
 
 - [v3.5.3 → v3.5.5: Test Fixes & Cleanup](#v353--v355-test-fixes--cleanup)
-- [v3.5.2 → v3.5.3: Skill Consolidation](#v35--v36-skill-consolidation)
+- [v3.5.2 → v3.5.3: Skill Consolidation](#v352--v353-skill-consolidation)
 - [v2.x → v3.0: Package Rename & Auto-Activation](#v2x--v30-package-rename--auto-activation)
 - [v3.0 → v3.1: Notepad Wisdom & Enhanced Features](#v30--v31-notepad-wisdom--enhanced-features)
 - [v3.x → v4.0: Major Architecture Overhaul](#v3x--v40-major-architecture-overhaul)
@@ -30,7 +30,7 @@ Maintenance release fixing test suite issues and continuing skill consolidation 
 **Skill Consolidation:**
 - Continued cleanup from v3.5.3
 - Removed deprecated `cancel-*` skills (use `/cancel` instead)
-- Final skill count: 35 core skills
+- Final skill count: 37 core skills
 
 ### Migration Steps
 
@@ -103,7 +103,7 @@ The following skills have been **completely removed** in v3.5.3:
 ### Skill Count
 
 - v3.5: 42 skills
-- v3.5.3: 35 skills (8 removed, 1 added)
+- v3.5.3: 37 skills (8 removed, 3 added)
 
 ---
 
@@ -254,11 +254,11 @@ Include these anywhere in your message to explicitly activate behaviors. Use key
 | `ulw` / `ultrawork` | Maximum parallel execution | "ulw: fix all type errors" |
 | `plan` | Planning interview | "plan: new API design" |
 
-**Combine them for superpowers:**
+**ralph includes ultrawork:**
 ```
-ralph ulw: migrate the entire database
+ralph: migrate the entire database
     ↓
-Persistence (won't stop) + Ultrawork (maximum parallelism)
+Persistence (won't stop) + Ultrawork (maximum parallelism) built-in
 ```
 
 **No keywords?** Claude still auto-detects:

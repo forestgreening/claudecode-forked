@@ -20986,7 +20986,7 @@ function zodTypeToJsonSchema(zodType) {
 }
 var server = new Server(
   {
-    name: "omc-tools",
+    name: "t",
     version: "1.0.0"
   },
   {

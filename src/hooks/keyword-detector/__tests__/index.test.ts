@@ -1,13 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   removeCodeBlocks,
   extractPromptText,
   detectKeywordsWithType,
   hasKeyword,
   getPrimaryKeyword,
+  getAllKeywords,
   type KeywordType,
   type DetectedKeyword,
 } from '../index.js';
+
+// Mock isEcomodeEnabled
+vi.mock('../../../features/auto-update.js', () => ({
+  isEcomodeEnabled: vi.fn(() => true),
+}));
+
+import { isEcomodeEnabled } from '../../../features/auto-update.js';
+const mockedIsEcomodeEnabled = vi.mocked(isEcomodeEnabled);
 
 describe('keyword-detector', () => {
   describe('removeCodeBlocks', () => {
@@ -348,6 +357,68 @@ World`);
       });
     });
 
+    describe('ecomode keyword', () => {
+      it('should detect eco keyword', () => {
+        const result = detectKeywordsWithType('eco fix all errors');
+        const ecoMatch = result.find((r) => r.type === 'ecomode');
+        expect(ecoMatch).toBeDefined();
+      });
+
+      it('should detect ecomode keyword', () => {
+        const result = detectKeywordsWithType('ecomode fix build');
+        const ecoMatch = result.find((r) => r.type === 'ecomode');
+        expect(ecoMatch).toBeDefined();
+      });
+
+      it('should detect save-tokens keyword', () => {
+        const result = detectKeywordsWithType('save-tokens and fix errors');
+        const ecoMatch = result.find((r) => r.type === 'ecomode');
+        expect(ecoMatch).toBeDefined();
+      });
+
+      it('should detect budget keyword', () => {
+        const result = detectKeywordsWithType('budget fix all errors');
+        const ecoMatch = result.find((r) => r.type === 'ecomode');
+        expect(ecoMatch).toBeDefined();
+      });
+
+      describe('when ecomode is disabled via config', () => {
+        beforeEach(() => {
+          mockedIsEcomodeEnabled.mockReturnValue(false);
+        });
+
+        afterEach(() => {
+          mockedIsEcomodeEnabled.mockReturnValue(true);
+        });
+
+        it('should NOT detect eco keyword when disabled', () => {
+          const result = detectKeywordsWithType('eco fix all errors');
+          const ecoMatch = result.find((r) => r.type === 'ecomode');
+          expect(ecoMatch).toBeUndefined();
+        });
+
+        it('should NOT detect ecomode keyword when disabled', () => {
+          const result = detectKeywordsWithType('ecomode fix build');
+          const ecoMatch = result.find((r) => r.type === 'ecomode');
+          expect(ecoMatch).toBeUndefined();
+        });
+
+        it('should still detect ultrawork when ecomode is disabled', () => {
+          const result = detectKeywordsWithType('ulw eco fix errors');
+          const ultraworkMatch = result.find((r) => r.type === 'ultrawork');
+          expect(ultraworkMatch).toBeDefined();
+          const ecoMatch = result.find((r) => r.type === 'ecomode');
+          expect(ecoMatch).toBeUndefined();
+        });
+
+        it('should not suppress ultrawork when ecomode disabled and both keywords present', () => {
+          const result = getAllKeywords('ulw eco fix errors');
+          expect(result).toContain('ultrawork');
+          expect(result).not.toContain('ecomode');
+        });
+      });
+    });
+
     describe('case insensitivity', () => {
       it('should detect RALPH in uppercase', () => {
         const result = detectKeywordsWithType('RALPH this task');
@@ -481,6 +552,37 @@ World`);
       });
     });
 
+    describe('multiple keyword conflict resolution', () => {
+      it('should return ecomode over ultrawork when both present', () => {
+        // ecomode wins over ultrawork per conflict resolution rules
+        const result = getPrimaryKeyword('ulw eco fix errors');
+        expect(result?.type).toBe('ecomode');
+      });
+
+      it('should return ecomode over ultrawork (ecomode has higher priority)', () => {
+        // UPDATED: ecomode wins per conflict resolution
+        const result = getPrimaryKeyword('eco ultrawork fix errors');
+        expect(result?.type).toBe('ecomode');
+      });
+
+      it('should return cancel over everything', () => {
+        const result = getPrimaryKeyword('cancelomc ralph ultrawork eco');
+        expect(result?.type).toBe('cancel');
+      });
+
+      it('should return ralph over ultrawork and ecomode', () => {
+        const result = getPrimaryKeyword('ralph ulw eco fix errors');
+        expect(result?.type).toBe('ralph');
+      });
+
+      it('should detect all keywords even when multiple present', () => {
+        const result = detectKeywordsWithType('ulw eco fix errors');
+        const types = result.map(r => r.type);
+        expect(types).toContain('ultrawork');
+        expect(types).toContain('ecomode');
+      });
+    });
+
     it('should return null when no keyword found', () => {
       const result = getPrimaryKeyword('regular text');
       expect(result).toBeNull();
@@ -509,6 +611,56 @@ World`);
       const result = getPrimaryKeyword(text);
       // ralph has highest priority
       expect(result?.type).toBe('ralph');
+    });
+  });
+
+  describe('getAllKeywords', () => {
+    it('should return single keyword in array', () => {
+      expect(getAllKeywords('autopilot this')).toEqual(['autopilot']);
+    });
+
+    it('should return multiple non-conflicting keywords in priority order', () => {
+      expect(getAllKeywords('ulw ralph fix errors')).toEqual(['ralph', 'ultrawork']);
+    });
+
+    it('should return cancel exclusively when present', () => {
+      expect(getAllKeywords('cancelomc ralph ultrawork')).toEqual(['cancel']);
+    });
+
+    it('should return ecomode over ultrawork when both present', () => {
+      expect(getAllKeywords('ulw eco fix errors')).toEqual(['ecomode']);
+    });
+
+    it('should return ultrapilot over autopilot when both present', () => {
+      expect(getAllKeywords('autopilot ultrapilot build')).toEqual(['ultrapilot']);
+    });
+
+    it('should return ralph with ultrawork (not mutually exclusive)', () => {
+      const result = getAllKeywords('ralph ultrawork fix');
+      expect(result).toContain('ralph');
+      expect(result).toContain('ultrawork');
+    });
+
+    it('should return ralph with ecomode but not ultrawork', () => {
+      const result = getAllKeywords('ralph eco ulw fix');
+      expect(result).toContain('ralph');
+      expect(result).toContain('ecomode');
+      expect(result).not.toContain('ultrawork');
+    });
+
+    it('should return empty array for no keywords', () => {
+      expect(getAllKeywords('regular text')).toEqual([]);
+    });
+
+    it('should handle code block exclusion', () => {
+      expect(getAllKeywords('```autopilot```')).toEqual([]);
+    });
+
+    it('should handle multiple combinable keywords', () => {
+      const result = getAllKeywords('ralph tdd research fix');
+      expect(result).toContain('ralph');
+      expect(result).toContain('tdd');
+      expect(result).toContain('research');
     });
   });
 });

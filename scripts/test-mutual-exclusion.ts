@@ -7,7 +7,7 @@ import { mkdirSync } from 'fs';
 
 // Import the hooks
 import { startUltraQA, clearUltraQAState, isRalphLoopActive } from '../src/hooks/ultraqa/index.js';
-import { createRalphLoopHook, clearRalphState, isUltraQAActive } from '../src/hooks/ralph-loop/index.js';
+import { createRalphLoopHook, clearRalphState, isUltraQAActive } from '../src/hooks/ralph/index.js';
 
 // Test utilities
 function printTest(testName: string, passed: boolean) {
@@ -36,7 +36,7 @@ async function runTests() {
     const ralphStarted = ralphHook.startLoop(
       'test-session-1',
       'test task',
-      { maxIterations: 5, completionPromise: 'TASK_COMPLETE' }
+      { maxIterations: 5 }
     );
 
     if (!ralphStarted) {
@@ -86,7 +86,7 @@ async function runTests() {
     const ralphStarted2 = ralphHook2.startLoop(
       'test-session-4',
       'test task',
-      { maxIterations: 5, completionPromise: 'TASK_COMPLETE' }
+      { maxIterations: 5 }
     );
 
     if (ralphStarted2) {

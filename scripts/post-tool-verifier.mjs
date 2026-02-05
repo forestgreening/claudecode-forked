@@ -6,7 +6,7 @@
  * Cross-platform: Windows, macOS, Linux
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -15,7 +15,6 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const distDir = join(__dirname, '..', 'dist', 'hooks', 'notepad');
-const clearSuggestionsDistDir = join(__dirname, '..', 'dist', 'hooks', 'clear-suggestions');
 
 // Try to import notepad functions (may fail if not built)
 let setPriorityContext = null;
@@ -26,15 +25,6 @@ try {
   addWorkingMemoryEntry = notepadModule.addWorkingMemoryEntry;
 } catch {
   // Notepad module not available - remember tags will be silently ignored
-}
-
-// Try to import clear suggestions functions (may fail if not built)
-let checkClearSuggestion = null;
-try {
-  const clearSuggestionsModule = await import(join(clearSuggestionsDistDir, 'index.js'));
-  checkClearSuggestion = clearSuggestionsModule.checkClearSuggestion;
-} catch {
-  // Clear suggestions module not available - will be silently skipped
 }
 
 // State file for session tracking
@@ -95,6 +85,38 @@ function updateStats(toolName, sessionId) {
 
   saveStats(stats);
   return session.tool_counts[toolName];
+}
+
+// Read bash history config (default: enabled)
+function getBashHistoryConfig() {
+  try {
+    const configPath = join(homedir(), '.claude', '.omc-config.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      if (config.bashHistory === false) return false;
+      if (typeof config.bashHistory === 'object' && config.bashHistory.enabled === false) return false;
+    }
+  } catch {}
+  return true; // Default: enabled
+}
+
+// Append command to ~/.bash_history
+function appendToBashHistory(command) {
+  if (!command || typeof command !== 'string') return;
+
+  // Clean command: trim, skip empty, skip if it's just whitespace
+  const cleaned = command.trim();
+  if (!cleaned) return;
+
+  // Skip internal/meta commands that aren't useful in history
+  if (cleaned.startsWith('#')) return;
+
+  try {
+    const historyPath = join(homedir(), '.bash_history');
+    appendFileSync(historyPath, cleaned + '\n');
+  } catch {
+    // Silently fail - history is best-effort
+  }
 }
 
 // Detect failures in Bash output
@@ -180,8 +202,34 @@ function detectWriteFailure(output) {
   return errorPatterns.some(pattern => pattern.test(output));
 }
 
+// Get agent completion summary from tracking state
+function getAgentCompletionSummary(directory) {
+  const trackingFile = join(directory, '.omc', 'state', 'subagent-tracking.json');
+  try {
+    if (existsSync(trackingFile)) {
+      const data = JSON.parse(readFileSync(trackingFile, 'utf-8'));
+      const agents = data.agents || [];
+      const running = agents.filter(a => a.status === 'running');
+      const completed = data.total_completed || 0;
+      const failed = data.total_failed || 0;
+
+      if (running.length === 0 && completed === 0 && failed === 0) return '';
+
+      const parts = [];
+      if (running.length > 0) {
+        parts.push(`Running: ${running.length} [${running.map(a => a.agent_type.replace('oh-my-claudecode:', '')).join(', ')}]`);
+      }
+      if (completed > 0) parts.push(`Completed: ${completed}`);
+      if (failed > 0) parts.push(`Failed: ${failed}`);
+
+      return parts.join(' | ');
+    }
+  } catch {}
+  return '';
+}
+
 // Generate contextual message
-function generateMessage(toolName, toolOutput, sessionId, toolCount) {
+function generateMessage(toolName, toolOutput, sessionId, toolCount, directory) {
   let message = '';
 
   switch (toolName) {
@@ -193,7 +241,8 @@ function generateMessage(toolName, toolOutput, sessionId, toolCount) {
       }
       break;
 
-    case 'Task':
+    case 'Task': {
+      const agentSummary = getAgentCompletionSummary(directory);
       if (detectWriteFailure(toolOutput)) {
         message = 'Task delegation failed. Verify agent name and parameters.';
       } else if (detectBackgroundOperation(toolOutput)) {
@@ -201,7 +250,11 @@ function generateMessage(toolName, toolOutput, sessionId, toolCount) {
       } else if (toolCount > 5) {
         message = `Multiple tasks delegated (${toolCount} total). Track their completion status.`;
       }
+      if (agentSummary) {
+        message = message ? `${message} | ${agentSummary}` : agentSummary;
+      }
       break;
+    }
 
     case 'Edit':
       if (detectWriteFailure(toolOutput)) {
@@ -264,42 +317,24 @@ async function main() {
     // Update session statistics
     const toolCount = updateStats(toolName, sessionId);
 
+    // Append Bash commands to ~/.bash_history for terminal recall
+    if ((toolName === 'Bash' || toolName === 'bash') && getBashHistoryConfig()) {
+      const toolInput = data.toolInput || data.tool_input || {};
+      const command = typeof toolInput === 'string' ? toolInput : (toolInput.command || '');
+      appendToBashHistory(command);
+    }
+
     // Process <remember> tags from Task agent output
     if (toolName === 'Task' || toolName === 'task') {
       processRememberTags(toolOutput, directory);
     }
 
     // Generate contextual message
-    const message = generateMessage(toolName, toolOutput, sessionId, toolCount);
-
-    // Check for clear suggestions (complements /compact suggestions)
-    let clearSuggestionMessage = null;
-    if (checkClearSuggestion) {
-      try {
-        const stats = loadStats();
-        const session = stats.sessions[sessionId];
-        // Estimate context usage from total tool calls (rough heuristic)
-        const estimatedContextRatio = session ? Math.min(session.total_calls / 200, 1.0) : 0;
-
-        const clearResult = checkClearSuggestion({
-          sessionId,
-          directory,
-          toolName,
-          toolOutput,
-          contextUsageRatio: estimatedContextRatio,
-        });
-
-        if (clearResult.shouldSuggest && clearResult.message) {
-          clearSuggestionMessage = clearResult.message;
-        }
-      } catch {
-        // Clear suggestion check failed - continue without it
-      }
-    }
+    const message = generateMessage(toolName, toolOutput, sessionId, toolCount, directory);
 
     // Build response - use hookSpecificOutput.additionalContext for PostToolUse
     const response = { continue: true };
-    const contextMessage = clearSuggestionMessage || message;
+    const contextMessage = message;
     if (contextMessage) {
       response.hookSpecificOutput = {
         hookEventName: 'PostToolUse',

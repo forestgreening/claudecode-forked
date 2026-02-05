@@ -325,7 +325,7 @@ describe('Task System Support', () => {
 
     it('should return source: task when only Tasks have incomplete items', async () => {
       vi.mocked(fs.existsSync).mockImplementation((p: any) => {
-        return p.includes('/tasks/');
+        return /[\\/]tasks[\\/]/.test(p);
       });
       vi.mocked(fs.readdirSync).mockReturnValue(['1.json'] as any);
       vi.mocked(fs.readFileSync).mockReturnValue(
@@ -339,7 +339,7 @@ describe('Task System Support', () => {
 
     it('should return source: todo when only legacy todos exist', async () => {
       vi.mocked(fs.existsSync).mockImplementation((p: any) => {
-        return p.includes('/todos/') || p.includes('todos.json');
+        return /[\\/]todos[\\/]/.test(p) || /todos\.json$/.test(p);
       });
       vi.mocked(fs.readdirSync).mockReturnValue(['session123.json'] as any);
       vi.mocked(fs.readFileSync).mockReturnValue(
@@ -354,13 +354,13 @@ describe('Task System Support', () => {
     it('should return source: both when both systems have incomplete items', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       vi.mocked(fs.readdirSync).mockImplementation((dirPath: any) => {
-        if (dirPath.includes('/tasks/')) {
+        if (/[\\/]tasks[\\/]/.test(dirPath)) {
           return ['1.json'] as any;
         }
         return ['session123.json'] as any;
       });
       vi.mocked(fs.readFileSync).mockImplementation((filePath: any) => {
-        if (filePath.includes('/tasks/')) {
+        if (/[\\/]tasks[\\/]/.test(filePath)) {
           return JSON.stringify({ id: '1', subject: 'Task', status: 'pending' });
         }
         return JSON.stringify([{ content: 'Todo', status: 'pending' }]);
@@ -374,13 +374,13 @@ describe('Task System Support', () => {
     it('should prioritize tasks over legacy todos', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       vi.mocked(fs.readdirSync).mockImplementation((dirPath: any) => {
-        if (dirPath.includes('/tasks/')) {
+        if (/[\\/]tasks[\\/]/.test(dirPath)) {
           return ['1.json'] as any;
         }
         return ['session123.json'] as any;
       });
       vi.mocked(fs.readFileSync).mockImplementation((filePath: any) => {
-        if (filePath.includes('/tasks/')) {
+        if (/[\\/]tasks[\\/]/.test(filePath)) {
           return JSON.stringify({ id: '1', subject: 'Task Subject', status: 'pending' });
         }
         return JSON.stringify([{ content: 'Legacy Todo', status: 'pending' }]);
@@ -426,9 +426,12 @@ describe('Task System Support', () => {
       expect(isUserAbort(context)).toBe(true);
     });
 
-    it('should detect cancel pattern', () => {
-      const context: StopContext = { stop_reason: 'operation_cancelled' };
+    it('should detect exact cancel pattern (not substring)', () => {
+      // After issue #210 fix, 'cancel' only matches exactly, not as substring
+      const context: StopContext = { stop_reason: 'cancel' };
       expect(isUserAbort(context)).toBe(true);
+      // Compound words like operation_cancelled should NOT match
+      expect(isUserAbort({ stop_reason: 'operation_cancelled' })).toBe(false);
     });
 
     it('should be case insensitive', () => {
@@ -649,7 +652,7 @@ describe('Task System Support', () => {
 
     it('should read from project .omc directory', () => {
       vi.mocked(fs.existsSync).mockImplementation((p: any) => {
-        return p.includes('.omc/todos.json');
+        return /[\\/]\.omc[\\/]todos\.json$/.test(p);
       });
       vi.mocked(fs.readFileSync).mockReturnValue(
         JSON.stringify([{ content: 'Todo', status: 'pending' }])
@@ -703,13 +706,13 @@ describe('Task System Support', () => {
     it('should prefer tasks when both exist and tasks have incomplete items', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       vi.mocked(fs.readdirSync).mockImplementation((dirPath: any) => {
-        if (dirPath.includes('/tasks/')) {
+        if (/[\\/]tasks[\\/]/.test(dirPath)) {
           return ['1.json'] as any;
         }
         return ['session123.json'] as any;
       });
       vi.mocked(fs.readFileSync).mockImplementation((filePath: any) => {
-        if (filePath.includes('/tasks/')) {
+        if (/[\\/]tasks[\\/]/.test(filePath)) {
           return JSON.stringify({ id: '1', subject: 'Task', status: 'pending' });
         }
         return JSON.stringify([{ content: 'Todo', status: 'completed' }]);
@@ -728,7 +731,7 @@ describe('Task System Support', () => {
     });
 
     it('should convert tasks to todo format in result', async () => {
-      vi.mocked(fs.existsSync).mockImplementation((p: any) => p.includes('/tasks/'));
+      vi.mocked(fs.existsSync).mockImplementation((p: any) => /[\\/]tasks[\\/]/.test(p));
       vi.mocked(fs.readdirSync).mockReturnValue(['1.json'] as any);
       vi.mocked(fs.readFileSync).mockReturnValue(
         JSON.stringify({ id: 'task-1', subject: 'Task Subject', status: 'pending' })
@@ -869,7 +872,7 @@ describe('Task System Support', () => {
     it('should return valid path for valid session ID', () => {
       const result = getTaskDirectory('valid-session-123');
       expect(result).toContain('valid-session-123');
-      expect(result).toContain('.claude/tasks');
+      expect(result).toContain(path.join('.claude', 'tasks'));
     });
   });
 

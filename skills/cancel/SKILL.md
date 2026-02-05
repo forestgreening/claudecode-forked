@@ -7,6 +7,12 @@ description: Cancel any active OMC mode (autopilot, ralph, ultrawork, ecomode, u
 
 Intelligent cancellation that detects and cancels the active OMC mode.
 
+**The cancel skill is the standard way to complete and exit any OMC mode.**
+When the stop hook detects work is complete, it instructs the LLM to invoke
+this skill for proper state cleanup. If cancel fails or is interrupted,
+retry with `--force` flag, or wait for the 2-hour staleness timeout as
+a last resort.
+
 ## What It Does
 
 Automatically detects which mode is active and cancels it:
@@ -25,7 +31,7 @@ Automatically detects which mode is active and cancels it:
 /oh-my-claudecode:cancel
 ```
 
-Or say: "stop", "cancel", "abort"
+Or say: "cancelomc", "stopomc"
 
 ## Auto-Detection
 
@@ -69,6 +75,8 @@ Or use the `--all` alias:
 This removes all state files:
 - `.omc/state/autopilot-state.json`
 - `.omc/state/ralph-state.json`
+- `.omc/state/ralph-plan-state.json`
+- `.omc/state/ralph-verification.json`
 - `.omc/state/ultrawork-state.json`
 - `.omc/state/ecomode-state.json`
 - `.omc/state/ultraqa-state.json`
@@ -76,13 +84,19 @@ This removes all state files:
 - `.omc/state/swarm.db-wal`
 - `.omc/state/swarm.db-shm`
 - `.omc/state/swarm-active.marker`
+- `.omc/state/swarm-tasks.db`
 - `.omc/state/ultrapilot-state.json`
+- `.omc/state/ultrapilot-ownership.json`
 - `.omc/state/pipeline-state.json`
 - `.omc/state/plan-consensus.json`
 - `.omc/state/ralplan-state.json`
-- `~/.claude/ralph-state.json`
-- `~/.claude/ultrawork-state.json`
-- `~/.claude/ecomode-state.json`
+- `.omc/state/boulder.json`
+- `.omc/state/hud-state.json`
+- `.omc/state/subagent-tracking.json`
+- `.omc/state/subagent-tracker.lock`
+- `.omc/state/rate-limit-daemon.pid`
+- `.omc/state/rate-limit-daemon.log`
+- `.omc/state/checkpoints/` (directory)
 
 ## Implementation Steps
 
@@ -147,24 +161,34 @@ if [[ "$FORCE_MODE" == "true" ]]; then
   # Remove local state files
   rm -f .omc/state/autopilot-state.json
   rm -f .omc/state/ralph-state.json
+  rm -f .omc/state/ralph-plan-state.json
+  rm -f .omc/state/ralph-verification.json
   rm -f .omc/state/ultrawork-state.json
   rm -f .omc/state/ecomode-state.json
   rm -f .omc/state/ultraqa-state.json
-  rm -f .omc/state/ralph-plan-state.json
-  rm -f .omc/state/ralph-verification.json
   rm -f .omc/state/swarm.db
   rm -f .omc/state/swarm.db-wal
   rm -f .omc/state/swarm.db-shm
   rm -f .omc/state/swarm-active.marker
+  rm -f .omc/state/swarm-tasks.db
   rm -f .omc/state/ultrapilot-state.json
+  rm -f .omc/state/ultrapilot-ownership.json
   rm -f .omc/state/pipeline-state.json
   rm -f .omc/state/plan-consensus.json
   rm -f .omc/state/ralplan-state.json
+  rm -f .omc/state/boulder.json
+  rm -f .omc/state/hud-state.json
+  rm -f .omc/state/subagent-tracking.json
+  rm -f .omc/state/subagent-tracker.lock
+  rm -f .omc/state/rate-limit-daemon.pid
+  rm -f .omc/state/rate-limit-daemon.log
+  rm -rf .omc/state/checkpoints/
 
-  # Remove global state files
-  rm -f ~/.claude/ralph-state.json
-  rm -f ~/.claude/ultrawork-state.json
-  rm -f ~/.claude/ecomode-state.json
+  # Stop rate-limit daemon if running
+  if [[ -f .omc/state/rate-limit-daemon.pid ]]; then
+    kill "$(cat .omc/state/rate-limit-daemon.pid)" 2>/dev/null || true
+    rm -f .omc/state/rate-limit-daemon.pid
+  fi
 
   echo "All OMC modes cleared. You are free to start fresh."
   exit 0
@@ -189,13 +213,11 @@ if [[ -f .omc/state/autopilot-state.json ]]; then
     # Clean linked ultrawork first
     if [[ "$LINKED_UW" == "true" ]] && [[ -f .omc/state/ultrawork-state.json ]]; then
       rm -f .omc/state/ultrawork-state.json
-      rm -f ~/.claude/ultrawork-state.json
       echo "Cleaned up: ultrawork (linked to ralph)"
     fi
 
     # Clean ralph
     rm -f .omc/state/ralph-state.json
-    rm -f ~/.claude/ralph-state.json
     rm -f .omc/state/ralph-verification.json
     echo "Cleaned up: ralph"
   fi
@@ -234,14 +256,12 @@ if [[ -f .omc/state/ralph-state.json ]]; then
     # Only clear if it was linked to ralph
     if [[ "$UW_LINKED" == "true" ]]; then
       rm -f .omc/state/ultrawork-state.json
-      rm -f ~/.claude/ultrawork-state.json
       echo "Cleaned up: ultrawork (linked to ralph)"
     fi
   fi
 
-  # Clean ralph state (both local and global)
+  # Clean ralph state
   rm -f .omc/state/ralph-state.json
-  rm -f ~/.claude/ralph-state.json
   rm -f .omc/state/ralph-plan-state.json
   rm -f .omc/state/ralph-verification.json
 
@@ -264,9 +284,8 @@ if [[ -f .omc/state/ultrawork-state.json ]]; then
     exit 1
   fi
 
-  # Remove both local and global state
+  # Remove local state
   rm -f .omc/state/ultrawork-state.json
-  rm -f ~/.claude/ultrawork-state.json
 
   echo "Ultrawork cancelled. Parallel execution mode deactivated."
 fi
@@ -314,29 +333,38 @@ fi
 if [[ "$FORCE_MODE" == "true" ]]; then
   echo "FORCE CLEAR: Removing all OMC state files..."
 
-  mkdir -p .omc ~/.claude
+  mkdir -p .omc/state
+
+  # Stop rate-limit daemon if running
+  if [[ -f .omc/state/rate-limit-daemon.pid ]]; then
+    kill "$(cat .omc/state/rate-limit-daemon.pid)" 2>/dev/null || true
+    rm -f .omc/state/rate-limit-daemon.pid
+  fi
 
   # Remove local state files
   rm -f .omc/state/autopilot-state.json
   rm -f .omc/state/ralph-state.json
+  rm -f .omc/state/ralph-plan-state.json
+  rm -f .omc/state/ralph-verification.json
   rm -f .omc/state/ultrawork-state.json
   rm -f .omc/state/ecomode-state.json
   rm -f .omc/state/ultraqa-state.json
-  rm -f .omc/state/ralph-plan-state.json
-  rm -f .omc/state/ralph-verification.json
   rm -f .omc/state/swarm.db
   rm -f .omc/state/swarm.db-wal
   rm -f .omc/state/swarm.db-shm
   rm -f .omc/state/swarm-active.marker
+  rm -f .omc/state/swarm-tasks.db
   rm -f .omc/state/ultrapilot-state.json
+  rm -f .omc/state/ultrapilot-ownership.json
   rm -f .omc/state/pipeline-state.json
   rm -f .omc/state/plan-consensus.json
   rm -f .omc/state/ralplan-state.json
-
-  # Remove global state files
-  rm -f ~/.claude/ralph-state.json
-  rm -f ~/.claude/ultrawork-state.json
-  rm -f ~/.claude/ecomode-state.json
+  rm -f .omc/state/boulder.json
+  rm -f .omc/state/hud-state.json
+  rm -f .omc/state/subagent-tracking.json
+  rm -f .omc/state/subagent-tracker.lock
+  rm -f .omc/state/rate-limit-daemon.log
+  rm -rf .omc/state/checkpoints/
 
   echo ""
   echo "All OMC modes cleared. You are free to start fresh."
@@ -366,13 +394,11 @@ if [[ -f .omc/state/autopilot-state.json ]]; then
         # Clean linked ultrawork first
         if [[ "$LINKED_UW" == "true" ]] && [[ -f .omc/state/ultrawork-state.json ]]; then
           rm -f .omc/state/ultrawork-state.json
-          rm -f ~/.claude/ultrawork-state.json
           CLEANED_UP+=("ultrawork")
         fi
 
         # Clean ralph
         rm -f .omc/state/ralph-state.json
-        rm -f ~/.claude/ralph-state.json
         rm -f .omc/state/ralph-verification.json
         CLEANED_UP+=("ralph")
       fi
@@ -420,7 +446,6 @@ if [[ -f .omc/state/ralph-state.json ]]; then
       # Only clear if it was linked to ralph
       if [[ "$UW_LINKED" == "true" ]]; then
         rm -f .omc/state/ultrawork-state.json
-        rm -f ~/.claude/ultrawork-state.json
         echo "Cleaned up: ultrawork (linked to ralph)"
       fi
     fi
@@ -434,14 +459,12 @@ if [[ -f .omc/state/ralph-state.json ]]; then
 
       if [[ "$ECO_LINKED" == "true" ]]; then
         rm -f .omc/state/ecomode-state.json
-        rm -f ~/.claude/ecomode-state.json
         echo "Cleaned up: ecomode (linked to ralph)"
       fi
     fi
 
-    # Clean ralph state (both local and global)
+    # Clean ralph state
     rm -f .omc/state/ralph-state.json
-    rm -f ~/.claude/ralph-state.json
     rm -f .omc/state/ralph-plan-state.json
     rm -f .omc/state/ralph-verification.json
 
@@ -464,9 +487,8 @@ if [[ -f .omc/state/ultrawork-state.json ]]; then
       echo "Clearing ultrawork state anyway..."
     fi
 
-    # Remove both local and global state
+    # Remove local state
     rm -f .omc/state/ultrawork-state.json
-    rm -f ~/.claude/ultrawork-state.json
 
     echo "Ultrawork cancelled. Parallel execution mode deactivated."
     CANCELLED_ANYTHING=true
@@ -487,9 +509,8 @@ if [[ -f .omc/state/ecomode-state.json ]]; then
       echo "Clearing ecomode state anyway..."
     fi
 
-    # Remove both local and global state
+    # Remove local state
     rm -f .omc/state/ecomode-state.json
-    rm -f ~/.claude/ecomode-state.json
 
     echo "Ecomode cancelled. Token-efficient execution mode deactivated."
     CANCELLED_ANYTHING=true
@@ -636,5 +657,5 @@ fi
 - **Dependency-aware**: Autopilot cancellation cleans up Ralph and UltraQA
 - **Link-aware**: Ralph cancellation cleans up linked Ultrawork or Ecomode
 - **Safe**: Only clears linked Ultrawork, preserves standalone Ultrawork
-- **Dual-location**: Clears both `.omc/` and `~/.claude/` state files
+- **Local-only**: Clears state files in `.omc/state/` directory
 - **Resume-friendly**: Autopilot state is preserved for seamless resume

@@ -3,8 +3,16 @@
 // Processes <remember> tags from Task agent output
 // Saves to .omc/notepad.md for compaction-resilient memory
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Dynamic imports for shared modules
+const { readStdin } = await import(join(__dirname, 'lib', 'stdin.mjs'));
+const { atomicWriteFileSync } = await import(join(__dirname, 'lib', 'atomic-write.mjs'));
 
 // Constants
 const NOTEPAD_TEMPLATE = '# Notepad\n' +
@@ -16,26 +24,17 @@ const NOTEPAD_TEMPLATE = '# Notepad\n' +
   '## MANUAL\n' +
   '<!-- User content. Never auto-pruned. -->\n';
 
-// Read all stdin
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf-8');
-}
-
 // Initialize notepad.md if needed
 function initNotepad(directory) {
-  const sisyphusDir = join(directory, '.omc');
-  const notepadPath = join(sisyphusDir, 'notepad.md');
+  const omcDir = join(directory, '.omc');
+  const notepadPath = join(omcDir, 'notepad.md');
 
-  if (!existsSync(sisyphusDir)) {
-    try { mkdirSync(sisyphusDir, { recursive: true }); } catch {}
+  if (!existsSync(omcDir)) {
+    try { mkdirSync(omcDir, { recursive: true }); } catch {}
   }
 
   if (!existsSync(notepadPath)) {
-    try { writeFileSync(notepadPath, NOTEPAD_TEMPLATE); } catch {}
+    try { atomicWriteFileSync(notepadPath, NOTEPAD_TEMPLATE); } catch {}
   }
 
   return notepadPath;
@@ -53,7 +52,7 @@ function setPriorityContext(notepadPath, content) {
         '<!-- ALWAYS loaded. Keep under 500 chars. Critical discoveries only. -->\n' +
         content.trim() + '\n\n';
       notepad = notepad.replace(priorityMatch[0], newPriority);
-      writeFileSync(notepadPath, notepad);
+      atomicWriteFileSync(notepadPath, notepad);
     }
   } catch {}
 }
@@ -70,7 +69,7 @@ function addWorkingMemoryEntry(notepadPath, content) {
     const manualIndex = notepad.indexOf('## MANUAL');
     if (manualIndex !== -1) {
       notepad = notepad.slice(0, manualIndex) + entry + notepad.slice(manualIndex);
-      writeFileSync(notepadPath, notepad);
+      atomicWriteFileSync(notepadPath, notepad);
     }
   } catch {}
 }

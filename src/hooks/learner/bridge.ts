@@ -8,20 +8,155 @@
  * Usage: const bridge = require('../dist/hooks/skill-bridge.cjs');
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync } from 'fs';
-import { join, dirname, basename } from 'path';
-import { homedir } from 'os';
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+} from "fs";
+import { join, dirname, basename } from "path";
+import { homedir } from "os";
 
 // Re-export constants
-export const USER_SKILLS_DIR = join(homedir(), '.claude', 'skills', 'omc-learned');
-export const PROJECT_SKILLS_SUBDIR = '.omc/skills';
-export const SKILL_EXTENSION = '.md';
+export const USER_SKILLS_DIR = join(
+  homedir(),
+  ".claude",
+  "skills",
+  "omc-learned",
+);
+export const GLOBAL_SKILLS_DIR = join(homedir(), ".omc", "skills");
+export const PROJECT_SKILLS_SUBDIR = join(".omc", "skills");
+export const SKILL_EXTENSION = ".md";
 
 /** Session TTL: 1 hour */
 const SESSION_TTL_MS = 60 * 60 * 1000;
 
+/** Maximum recursion depth for directory traversal */
+const MAX_RECURSION_DEPTH = 10;
+
+/** Levenshtein cache size limit */
+const LEVENSHTEIN_CACHE_SIZE = 1000;
+
+/** Skill metadata cache TTL in milliseconds (30 seconds) */
+const SKILL_CACHE_TTL_MS = 30 * 1000;
+
+// =============================================================================
+// Performance Caches
+// =============================================================================
+
+/** LRU cache for Levenshtein distance calculations */
+const levenshteinCache = new Map<string, number>();
+
+/**
+ * Get cached Levenshtein distance or compute and cache it.
+ * Uses canonical key ordering to maximize cache hits.
+ */
+function getCachedLevenshtein(str1: string, str2: string): number {
+  const key = str1 < str2 ? `${str1}|${str2}` : `${str2}|${str1}`;
+  const cached = levenshteinCache.get(key);
+  if (cached !== undefined) {
+    levenshteinCache.delete(key);
+    levenshteinCache.set(key, cached);
+    return cached;
+  }
+
+  const result = levenshteinDistance(str1, str2);
+
+  if (levenshteinCache.size >= LEVENSHTEIN_CACHE_SIZE) {
+    const firstKey = levenshteinCache.keys().next().value;
+    if (firstKey) levenshteinCache.delete(firstKey);
+  }
+
+  levenshteinCache.set(key, result);
+  return result;
+}
+
+/** Cached skill metadata for faster matching */
+interface CachedSkillData {
+  path: string;
+  name: string;
+  triggers: string[];
+  triggersLower: string[];
+  matching: "exact" | "fuzzy" | undefined;
+  content: string;
+  scope: "user" | "project";
+}
+
+interface CachedSkillEntry {
+  skills: CachedSkillData[];
+  timestamp: number;
+}
+
+/** Skill metadata cache keyed by project root */
+let skillMetadataCache: Map<string, CachedSkillEntry> | null = null;
+
+/**
+ * Get cached skill metadata or refresh if stale.
+ */
+function getSkillMetadataCache(projectRoot: string): CachedSkillData[] {
+  if (!skillMetadataCache) {
+    skillMetadataCache = new Map();
+  }
+
+  const cached = skillMetadataCache.get(projectRoot);
+  const now = Date.now();
+
+  if (cached && now - cached.timestamp < SKILL_CACHE_TTL_MS) {
+    return cached.skills;
+  }
+
+  // Refresh cache
+  const candidates = findSkillFiles(projectRoot);
+  const skills: CachedSkillData[] = [];
+
+  for (const candidate of candidates) {
+    try {
+      const content = readFileSync(candidate.path, "utf-8");
+      const parsed = parseSkillFile(content);
+      if (!parsed) continue;
+
+      const triggers = parsed.metadata.triggers ?? [];
+      if (triggers.length === 0) continue;
+
+      const name =
+        parsed.metadata.name || basename(candidate.path, SKILL_EXTENSION);
+
+      skills.push({
+        path: candidate.path,
+        name,
+        triggers,
+        triggersLower: triggers.map((t) => t.toLowerCase()),
+        matching: parsed.metadata.matching,
+        content: parsed.content,
+        scope: candidate.scope,
+      });
+    } catch {
+      // Ignore file read errors
+    }
+  }
+
+  skillMetadataCache.set(projectRoot, { skills, timestamp: now });
+  return skills;
+}
+
+/**
+ * Clear skill metadata cache (for testing).
+ */
+export function clearSkillMetadataCache(): void {
+  skillMetadataCache = null;
+}
+
+/**
+ * Clear Levenshtein cache (for testing).
+ */
+export function clearLevenshteinCache(): void {
+  levenshteinCache.clear();
+}
+
 /** State file path */
-const STATE_FILE = '.omc/state/skill-sessions.json';
+const STATE_FILE = ".omc/state/skill-sessions.json";
 
 // =============================================================================
 // Types
@@ -30,7 +165,9 @@ const STATE_FILE = '.omc/state/skill-sessions.json';
 export interface SkillFileCandidate {
   path: string;
   realPath: string;
-  scope: 'user' | 'project';
+  scope: "user" | "project";
+  /** The root directory this skill was found in */
+  sourceDir: string;
 }
 
 export interface ParseResult {
@@ -40,7 +177,7 @@ export interface ParseResult {
     description?: string;
     triggers?: string[];
     tags?: string[];
-    matching?: 'exact' | 'fuzzy';
+    matching?: "exact" | "fuzzy";
     model?: string;
     agent?: string;
   };
@@ -54,9 +191,9 @@ export interface MatchedSkill {
   name: string;
   content: string;
   score: number;
-  scope: 'user' | 'project';
+  scope: "user" | "project";
   triggers: string[];
-  matching?: 'exact' | 'fuzzy';
+  matching?: "exact" | "fuzzy";
 }
 
 interface SessionState {
@@ -86,7 +223,7 @@ function readSessionState(projectRoot: string): SessionState {
   const stateFile = getStateFilePath(projectRoot);
   try {
     if (existsSync(stateFile)) {
-      const content = readFileSync(stateFile, 'utf-8');
+      const content = readFileSync(stateFile, "utf-8");
       return JSON.parse(content);
     }
   } catch {
@@ -102,7 +239,7 @@ function writeSessionState(projectRoot: string, state: SessionState): void {
   const stateFile = getStateFilePath(projectRoot);
   try {
     mkdirSync(dirname(stateFile), { recursive: true });
-    writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf-8');
+    writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8");
   } catch {
     // Ignore write errors (non-critical)
   }
@@ -111,7 +248,10 @@ function writeSessionState(projectRoot: string, state: SessionState): void {
 /**
  * Get paths of skills already injected in this session.
  */
-export function getInjectedSkillPaths(sessionId: string, projectRoot: string): string[] {
+export function getInjectedSkillPaths(
+  sessionId: string,
+  projectRoot: string,
+): string[] {
   const state = readSessionState(projectRoot);
   const session = state.sessions[sessionId];
 
@@ -128,7 +268,11 @@ export function getInjectedSkillPaths(sessionId: string, projectRoot: string): s
 /**
  * Mark skills as injected for this session.
  */
-export function markSkillsInjected(sessionId: string, paths: string[], projectRoot: string): void {
+export function markSkillsInjected(
+  sessionId: string,
+  paths: string[],
+  projectRoot: string,
+): void {
   const state = readSessionState(projectRoot);
   const now = Date.now();
 
@@ -158,8 +302,13 @@ export function markSkillsInjected(sessionId: string, paths: string[], projectRo
 /**
  * Recursively find all skill files in a directory.
  */
-function findSkillFilesRecursive(dir: string, results: string[]): void {
+function findSkillFilesRecursive(
+  dir: string,
+  results: string[],
+  depth: number = 0,
+): void {
   if (!existsSync(dir)) return;
+  if (depth > MAX_RECURSION_DEPTH) return;
 
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
@@ -167,7 +316,7 @@ function findSkillFilesRecursive(dir: string, results: string[]): void {
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        findSkillFilesRecursive(fullPath, results);
+        findSkillFilesRecursive(fullPath, results, depth + 1);
       } else if (entry.isFile() && entry.name.endsWith(SKILL_EXTENSION)) {
         results.push(fullPath);
       }
@@ -189,45 +338,72 @@ function safeRealpathSync(filePath: string): string {
 }
 
 /**
+ * Check if a resolved path is within a boundary directory.
+ */
+function isWithinBoundary(realPath: string, boundary: string): boolean {
+  const normalizedReal = realPath.replace(/\\/g, "/").replace(/\/+/g, "/");
+  const normalizedBoundary = boundary.replace(/\\/g, "/").replace(/\/+/g, "/");
+  return (
+    normalizedReal === normalizedBoundary ||
+    normalizedReal.startsWith(normalizedBoundary + "/")
+  );
+}
+
+/**
  * Find all skill files for a given project.
  * Returns project skills first (higher priority), then user skills.
  * Now supports RECURSIVE discovery (subdirectories included).
  */
-export function findSkillFiles(projectRoot: string): SkillFileCandidate[] {
+export function findSkillFiles(
+  projectRoot: string,
+  options?: { scope?: "project" | "user" | "all" },
+): SkillFileCandidate[] {
   const candidates: SkillFileCandidate[] = [];
   const seenRealPaths = new Set<string>();
+  const scope = options?.scope ?? "all";
 
   // 1. Search project-level skills (higher priority)
-  const projectSkillsDir = join(projectRoot, PROJECT_SKILLS_SUBDIR);
-  const projectFiles: string[] = [];
-  findSkillFilesRecursive(projectSkillsDir, projectFiles);
+  if (scope === "project" || scope === "all") {
+    const projectSkillsDir = join(projectRoot, PROJECT_SKILLS_SUBDIR);
+    const projectFiles: string[] = [];
+    findSkillFilesRecursive(projectSkillsDir, projectFiles);
 
-  for (const filePath of projectFiles) {
-    const realPath = safeRealpathSync(filePath);
-    if (seenRealPaths.has(realPath)) continue;
-    seenRealPaths.add(realPath);
+    for (const filePath of projectFiles) {
+      const realPath = safeRealpathSync(filePath);
+      if (seenRealPaths.has(realPath)) continue;
+      if (!isWithinBoundary(realPath, projectSkillsDir)) continue;
+      seenRealPaths.add(realPath);
 
-    candidates.push({
-      path: filePath,
-      realPath,
-      scope: 'project',
-    });
+      candidates.push({
+        path: filePath,
+        realPath,
+        scope: "project",
+        sourceDir: projectSkillsDir,
+      });
+    }
   }
 
-  // 2. Search user-level skills (lower priority)
-  const userFiles: string[] = [];
-  findSkillFilesRecursive(USER_SKILLS_DIR, userFiles);
+  // 2. Search user-level skills from both directories (lower priority)
+  if (scope === "user" || scope === "all") {
+    const userDirs = [GLOBAL_SKILLS_DIR, USER_SKILLS_DIR];
+    for (const userDir of userDirs) {
+      const userFiles: string[] = [];
+      findSkillFilesRecursive(userDir, userFiles);
 
-  for (const filePath of userFiles) {
-    const realPath = safeRealpathSync(filePath);
-    if (seenRealPaths.has(realPath)) continue;
-    seenRealPaths.add(realPath);
+      for (const filePath of userFiles) {
+        const realPath = safeRealpathSync(filePath);
+        if (seenRealPaths.has(realPath)) continue;
+        if (!isWithinBoundary(realPath, userDir)) continue;
+        seenRealPaths.add(realPath);
 
-    candidates.push({
-      path: filePath,
-      realPath,
-      scope: 'user',
-    });
+        candidates.push({
+          path: filePath,
+          realPath,
+          scope: "user",
+          sourceDir: userDir,
+        });
+      }
+    }
   }
 
   return candidates;
@@ -280,14 +456,14 @@ export function parseSkillFile(content: string): ParseResult | null {
  * Simple YAML parser for skill frontmatter.
  * Handles: id, name, description, triggers, tags, matching, model, agent
  */
-function parseYamlMetadata(yamlContent: string): ParseResult['metadata'] {
-  const lines = yamlContent.split('\n');
-  const metadata: ParseResult['metadata'] = {};
+function parseYamlMetadata(yamlContent: string): ParseResult["metadata"] {
+  const lines = yamlContent.split("\n");
+  const metadata: ParseResult["metadata"] = {};
 
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    const colonIndex = line.indexOf(':');
+    const colonIndex = line.indexOf(":");
 
     if (colonIndex === -1) {
       i++;
@@ -298,31 +474,35 @@ function parseYamlMetadata(yamlContent: string): ParseResult['metadata'] {
     const rawValue = line.slice(colonIndex + 1).trim();
 
     switch (key) {
-      case 'id':
+      case "id":
         metadata.id = parseStringValue(rawValue);
         break;
-      case 'name':
+      case "name":
         metadata.name = parseStringValue(rawValue);
         break;
-      case 'description':
+      case "description":
         metadata.description = parseStringValue(rawValue);
         break;
-      case 'model':
+      case "model":
         metadata.model = parseStringValue(rawValue);
         break;
-      case 'agent':
+      case "agent":
         metadata.agent = parseStringValue(rawValue);
         break;
-      case 'matching':
-        metadata.matching = parseStringValue(rawValue) as 'exact' | 'fuzzy';
+      case "matching":
+        metadata.matching = parseStringValue(rawValue) as "exact" | "fuzzy";
         break;
-      case 'triggers':
-      case 'tags': {
+      case "triggers":
+      case "tags": {
         const { value, consumed } = parseArrayValue(rawValue, lines, i);
-        if (key === 'triggers') {
-          metadata.triggers = Array.isArray(value) ? value : (value ? [value] : []);
+        if (key === "triggers") {
+          metadata.triggers = Array.isArray(value)
+            ? value
+            : value
+              ? [value]
+              : [];
         } else {
-          metadata.tags = Array.isArray(value) ? value : (value ? [value] : []);
+          metadata.tags = Array.isArray(value) ? value : value ? [value] : [];
         }
         i += consumed - 1;
         break;
@@ -336,9 +516,11 @@ function parseYamlMetadata(yamlContent: string): ParseResult['metadata'] {
 }
 
 function parseStringValue(value: string): string {
-  if (!value) return '';
-  if ((value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))) {
+  if (!value) return "";
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
     return value.slice(1, -1);
   }
   return value;
@@ -347,19 +529,24 @@ function parseStringValue(value: string): string {
 function parseArrayValue(
   rawValue: string,
   lines: string[],
-  currentIndex: number
+  currentIndex: number,
 ): { value: string | string[]; consumed: number } {
   // Inline array: ["a", "b"]
-  if (rawValue.startsWith('[')) {
-    const content = rawValue.slice(1, rawValue.lastIndexOf(']')).trim();
+  if (rawValue.startsWith("[")) {
+    const endIdx = rawValue.lastIndexOf("]");
+    if (endIdx === -1) return { value: [], consumed: 1 };
+    const content = rawValue.slice(1, endIdx).trim();
     if (!content) return { value: [], consumed: 1 };
 
-    const items = content.split(',').map(s => parseStringValue(s.trim())).filter(Boolean);
+    const items = content
+      .split(",")
+      .map((s) => parseStringValue(s.trim()))
+      .filter(Boolean);
     return { value: items, consumed: 1 };
   }
 
   // Multi-line array
-  if (!rawValue || rawValue === '') {
+  if (!rawValue || rawValue === "") {
     const items: string[] = [];
     let consumed = 1;
 
@@ -371,7 +558,7 @@ function parseArrayValue(
         const itemValue = parseStringValue(arrayMatch[1].trim());
         if (itemValue) items.push(itemValue);
         consumed++;
-      } else if (nextLine.trim() === '') {
+      } else if (nextLine.trim() === "") {
         consumed++;
       } else {
         break;
@@ -392,34 +579,36 @@ function parseArrayValue(
 // =============================================================================
 
 /**
- * Calculate Levenshtein distance between two strings.
+ * Calculate Levenshtein distance using O(n) space with 2 rows.
  */
 function levenshteinDistance(str1: string, str2: string): number {
   const m = str1.length;
   const n = str2.length;
 
-  const dp: number[][] = Array(m + 1)
-    .fill(null)
-    .map(() => Array(n + 1).fill(0));
-
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (str1[i - 1] === str2[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1];
-      } else {
-        dp[i][j] = 1 + Math.min(
-          dp[i - 1][j],
-          dp[i][j - 1],
-          dp[i - 1][j - 1]
-        );
-      }
-    }
+  // Optimize by making n the smaller dimension
+  if (m < n) {
+    return levenshteinDistance(str2, str1);
   }
 
-  return dp[m][n];
+  // Use 2 rows instead of full matrix for O(n) space
+  let prev = new Array<number>(n + 1);
+  let curr = new Array<number>(n + 1);
+
+  for (let j = 0; j <= n; j++) prev[j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        curr[j] = prev[j - 1];
+      } else {
+        curr[j] = 1 + Math.min(prev[j], curr[j - 1], prev[j - 1]);
+      }
+    }
+    [prev, curr] = [curr, prev];
+  }
+
+  return prev[n];
 }
 
 /**
@@ -427,7 +616,7 @@ function levenshteinDistance(str1: string, str2: string): number {
  * Returns confidence score 0-100.
  */
 function fuzzyMatchTrigger(prompt: string, trigger: string): number {
-  const words = prompt.split(/\s+/).filter(w => w.length > 0);
+  const words = prompt.split(/\s+/).filter((w) => w.length > 0);
 
   // Exact word match
   for (const word of words) {
@@ -437,10 +626,9 @@ function fuzzyMatchTrigger(prompt: string, trigger: string): number {
     }
   }
 
-  // Levenshtein distance for each word
   let bestScore = 0;
   for (const word of words) {
-    const distance = levenshteinDistance(word, trigger);
+    const distance = getCachedLevenshtein(word, trigger);
     const maxLen = Math.max(word.length, trigger.length);
     const similarity = maxLen > 0 ? ((maxLen - distance) / maxLen) * 100 : 0;
     bestScore = Math.max(bestScore, similarity);
@@ -460,69 +648,49 @@ export function matchSkillsForInjection(
   prompt: string,
   projectRoot: string,
   sessionId: string,
-  options: { fuzzyThreshold?: number; maxResults?: number } = {}
+  options: { fuzzyThreshold?: number; maxResults?: number } = {},
 ): MatchedSkill[] {
   const { fuzzyThreshold = 60, maxResults = 5 } = options;
   const promptLower = prompt.toLowerCase();
 
-  // Get already injected skills
-  const alreadyInjected = new Set(getInjectedSkillPaths(sessionId, projectRoot));
+  const alreadyInjected = new Set(
+    getInjectedSkillPaths(sessionId, projectRoot),
+  );
 
-  // Find all skill files
-  const candidates = findSkillFiles(projectRoot);
+  // Use cached skill metadata instead of re-reading files each time
+  const cachedSkills = getSkillMetadataCache(projectRoot);
   const matches: MatchedSkill[] = [];
 
-  for (const candidate of candidates) {
-    // Skip if already injected
-    if (alreadyInjected.has(candidate.path)) continue;
+  for (const skill of cachedSkills) {
+    if (alreadyInjected.has(skill.path)) continue;
 
-    try {
-      const content = readFileSync(candidate.path, 'utf-8');
-      const parsed = parseSkillFile(content);
-      if (!parsed) continue;
+    const useFuzzy = skill.matching === "fuzzy";
+    let totalScore = 0;
 
-      const triggers = parsed.metadata.triggers ?? [];
-      if (triggers.length === 0) continue;
-
-      const useFuzzy = parsed.metadata.matching === 'fuzzy';
-      let totalScore = 0;
-
-      // Check triggers
-      for (const trigger of triggers) {
-        const triggerLower = trigger.toLowerCase();
-
-        // Exact substring match (default)
-        if (promptLower.includes(triggerLower)) {
-          totalScore += 10;
-          continue;
-        }
-
-        // Fuzzy match (opt-in only)
-        if (useFuzzy) {
-          const fuzzyScore = fuzzyMatchTrigger(promptLower, triggerLower);
-          if (fuzzyScore >= fuzzyThreshold) {
-            totalScore += Math.round(fuzzyScore / 10); // Scale down for consistency
-          }
-        }
+    for (const triggerLower of skill.triggersLower) {
+      if (promptLower.includes(triggerLower)) {
+        totalScore += 10;
+        continue;
       }
 
-      if (totalScore > 0) {
-        // Get name from metadata or filename
-        const name = parsed.metadata.name ||
-                     basename(candidate.path, SKILL_EXTENSION);
-
-        matches.push({
-          path: candidate.path,
-          name,
-          content: parsed.content,
-          score: totalScore,
-          scope: candidate.scope,
-          triggers,
-          matching: parsed.metadata.matching,
-        });
+      if (useFuzzy) {
+        const fuzzyScore = fuzzyMatchTrigger(promptLower, triggerLower);
+        if (fuzzyScore >= fuzzyThreshold) {
+          totalScore += Math.round(fuzzyScore / 10);
+        }
       }
-    } catch {
-      // Ignore file read errors
+    }
+
+    if (totalScore > 0) {
+      matches.push({
+        path: skill.path,
+        name: skill.name,
+        content: skill.content,
+        score: totalScore,
+        scope: skill.scope,
+        triggers: skill.triggers,
+        matching: skill.matching,
+      });
     }
   }
 

@@ -73,19 +73,30 @@ function extractPrompt(input) {
   }
 }
 
-// Remove code blocks to prevent false positives
-function removeCodeBlocks(text) {
+// Sanitize text to prevent false positives from code blocks, XML tags, URLs, and file paths
+function sanitizeForKeywordDetection(text) {
   return text
+    // 1. Strip XML-style tag blocks: <tag-name ...>...</tag-name> (multi-line, greedy on tag name)
+    .replace(/<(\w[\w-]*)[\s>][\s\S]*?<\/\1>/g, '')
+    // 2. Strip self-closing XML tags: <tag-name />, <tag-name attr="val" />
+    .replace(/<\w[\w-]*(?:\s[^>]*)?\s*\/>/g, '')
+    // 3. Strip URLs: http://... or https://... up to whitespace
+    .replace(/https?:\/\/[^\s)>\]]+/g, '')
+    // 4. Strip file paths: /foo/bar/baz or foo/bar/baz (using lookbehind to avoid consuming leading char)
+    .replace(/(?<=^|[\s"'`(])(?:\/)?(?:[\w.-]+\/)+[\w.-]+/gm, '')
+    // 5. Strip markdown code blocks (existing)
     .replace(/```[\s\S]*?```/g, '')
+    // 6. Strip inline code (existing)
     .replace(/`[^`]+`/g, '');
 }
 
 // Create state file for a mode
-function activateState(directory, prompt, stateName) {
+function activateState(directory, prompt, stateName, sessionId) {
   const state = {
     active: true,
     started_at: new Date().toISOString(),
     original_prompt: prompt,
+    session_id: sessionId || undefined,
     reinforcement_count: 0,
     last_checked_at: new Date().toISOString()
   };
@@ -95,14 +106,14 @@ function activateState(directory, prompt, stateName) {
   if (!existsSync(localDir)) {
     try { mkdirSync(localDir, { recursive: true }); } catch {}
   }
-  try { writeFileSync(join(localDir, `${stateName}-state.json`), JSON.stringify(state, null, 2)); } catch {}
+  try { writeFileSync(join(localDir, `${stateName}-state.json`), JSON.stringify(state, null, 2), { mode: 0o600 }); } catch {}
 
   // Write to global .omc/state directory
   const globalDir = join(homedir(), '.omc', 'state');
   if (!existsSync(globalDir)) {
     try { mkdirSync(globalDir, { recursive: true }); } catch {}
   }
-  try { writeFileSync(join(globalDir, `${stateName}-state.json`), JSON.stringify(state, null, 2)); } catch {}
+  try { writeFileSync(join(globalDir, `${stateName}-state.json`), JSON.stringify(state, null, 2), { mode: 0o600 }); } catch {}
 }
 
 /**
@@ -135,6 +146,64 @@ IMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skil
 }
 
 /**
+ * Create multi-skill invocation message for combined keywords
+ */
+function createMultiSkillInvocation(skills, originalPrompt) {
+  if (skills.length === 0) return '';
+  if (skills.length === 1) {
+    return createSkillInvocation(skills[0].name, originalPrompt, skills[0].args);
+  }
+
+  const skillBlocks = skills.map((s, i) => {
+    const argsSection = s.args ? `\nArguments: ${s.args}` : '';
+    return `### Skill ${i + 1}: ${s.name.toUpperCase()}
+Skill: oh-my-claudecode:${s.name}${argsSection}`;
+  }).join('\n\n');
+
+  return `[MAGIC KEYWORDS DETECTED: ${skills.map(s => s.name.toUpperCase()).join(', ')}]
+
+You MUST invoke ALL of the following skills using the Skill tool, in order:
+
+${skillBlocks}
+
+User request:
+${originalPrompt}
+
+IMPORTANT: Invoke ALL skills listed above. Start with the first skill IMMEDIATELY. After it completes, invoke the next skill in order. Do not skip any skill.`;
+}
+
+/**
+ * Resolve conflicts between detected keywords
+ */
+function resolveConflicts(matches) {
+  const names = matches.map(m => m.name);
+
+  // Cancel is exclusive
+  if (names.includes('cancel')) {
+    return [matches.find(m => m.name === 'cancel')];
+  }
+
+  let resolved = [...matches];
+
+  // Ecomode beats ultrawork
+  if (names.includes('ecomode') && names.includes('ultrawork')) {
+    resolved = resolved.filter(m => m.name !== 'ultrawork');
+  }
+
+  // Ultrapilot beats autopilot
+  if (names.includes('ultrapilot') && names.includes('autopilot')) {
+    resolved = resolved.filter(m => m.name !== 'autopilot');
+  }
+
+  // Sort by priority order
+  const priorityOrder = ['cancel','ralph','autopilot','ultrapilot','ultrawork','ecomode',
+    'swarm','pipeline','ralplan','plan','tdd','research','ultrathink','deepsearch','analyze'];
+  resolved.sort((a, b) => priorityOrder.indexOf(a.name) - priorityOrder.indexOf(b.name));
+
+  return resolved;
+}
+
+/**
  * Create proper hook output with additionalContext (Claude Code hooks API)
  * The 'message' field is NOT a valid hook output - use hookSpecificOutput.additionalContext
  */
@@ -160,6 +229,7 @@ async function main() {
     let data = {};
     try { data = JSON.parse(input); } catch {}
     const directory = data.directory || process.cwd();
+    const sessionId = data.sessionId || data.session_id || '';
 
     const prompt = extractPrompt(input);
     if (!prompt) {
@@ -167,29 +237,22 @@ async function main() {
       return;
     }
 
-    const cleanPrompt = removeCodeBlocks(prompt).toLowerCase();
+    const cleanPrompt = sanitizeForKeywordDetection(prompt).toLowerCase();
 
-    // Priority order: cancel > ralph > autopilot > ultrapilot > ultrawork > ecomode > swarm > pipeline > ralplan > plan > tdd > research > ultrathink > deepsearch > analyze
+    // Collect all matching keywords
+    const matches = [];
 
-    // Priority 1: Cancel (BEFORE other modes - clears states)
-    // Use specific keywords to avoid false positives from natural language
-    // (e.g., "don't let it stop the context" or URLs containing "cancel")
+    // Cancel keywords
     if (/\b(cancelomc|stopomc)\b/i.test(cleanPrompt)) {
-      // Special: clear state files instead of creating them
-      clearStateFiles(directory, ['ralph', 'autopilot', 'ultrapilot', 'ultrawork', 'ecomode', 'swarm', 'pipeline']);
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('cancel', prompt))));
-      return;
+      matches.push({ name: 'cancel', args: '' });
     }
 
-    // Priority 2: Ralph keywords
+    // Ralph keywords
     if (/\b(ralph|don't stop|must complete|until done)\b/i.test(cleanPrompt)) {
-      activateState(directory, prompt, 'ralph');
-      activateState(directory, prompt, 'ultrawork');
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('ralph', prompt))));
-      return;
+      matches.push({ name: 'ralph', args: '' });
     }
 
-    // Priority 3: Autopilot keywords
+    // Autopilot keywords
     if (/\b(autopilot|auto pilot|auto-pilot|autonomous|full auto|fullsend)\b/i.test(cleanPrompt) ||
         /\bbuild\s+me\s+/i.test(cleanPrompt) ||
         /\bcreate\s+me\s+/i.test(cleanPrompt) ||
@@ -199,101 +262,131 @@ async function main() {
         /\bhandle\s+it\s+all\b/i.test(cleanPrompt) ||
         /\bend\s+to\s+end\b/i.test(cleanPrompt) ||
         /\be2e\s+this\b/i.test(cleanPrompt)) {
-      activateState(directory, prompt, 'autopilot');
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('autopilot', prompt))));
-      return;
+      matches.push({ name: 'autopilot', args: '' });
     }
 
-    // Priority 4: Ultrapilot
+    // Ultrapilot keywords
     if (/\b(ultrapilot|ultra-pilot)\b/i.test(cleanPrompt) ||
         /\bparallel\s+build\b/i.test(cleanPrompt) ||
         /\bswarm\s+build\b/i.test(cleanPrompt)) {
-      activateState(directory, prompt, 'ultrapilot');
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('ultrapilot', prompt))));
-      return;
+      matches.push({ name: 'ultrapilot', args: '' });
     }
 
-    // Priority 5: Ultrawork keywords
+    // Ultrawork keywords
     if (/\b(ultrawork|ulw|uw)\b/i.test(cleanPrompt)) {
-      activateState(directory, prompt, 'ultrawork');
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('ultrawork', prompt))));
-      return;
+      matches.push({ name: 'ultrawork', args: '' });
     }
 
-    // Priority 6: Ecomode keywords (includes "efficient")
+    // Ecomode keywords
     if (/\b(eco|ecomode|eco-mode|efficient|save-tokens|budget)\b/i.test(cleanPrompt)) {
-      activateState(directory, prompt, 'ecomode');
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('ecomode', prompt))));
-      return;
+      matches.push({ name: 'ecomode', args: '' });
     }
 
-    // Priority 7: Swarm - parse N from "swarm N agents"
+    // Swarm - parse N from "swarm N agents"
     const swarmMatch = cleanPrompt.match(/\bswarm\s+(\d+)\s+agents?\b/i);
     if (swarmMatch || /\bcoordinated\s+agents\b/i.test(cleanPrompt)) {
-      const agentCount = swarmMatch ? swarmMatch[1] : '3'; // default 3
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('swarm', prompt, agentCount))));
-      return;
+      const agentCount = swarmMatch ? swarmMatch[1] : '3';
+      matches.push({ name: 'swarm', args: agentCount });
     }
 
-    // Priority 8: Pipeline
+    // Pipeline keywords
     if (/\b(pipeline)\b/i.test(cleanPrompt) || /\bchain\s+agents\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('pipeline', prompt))));
-      return;
+      matches.push({ name: 'pipeline', args: '' });
     }
 
-    // Priority 9: Ralplan keyword (before plan to avoid false match)
+    // Ralplan keyword
     if (/\b(ralplan)\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('ralplan', prompt))));
-      return;
+      matches.push({ name: 'ralplan', args: '' });
     }
 
-    // Priority 10: Plan keywords
+    // Plan keywords
     if (/\b(plan this|plan the)\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('plan', prompt))));
-      return;
+      matches.push({ name: 'plan', args: '' });
     }
 
-    // Priority 11: TDD
+    // TDD keywords
     if (/\b(tdd)\b/i.test(cleanPrompt) ||
         /\btest\s+first\b/i.test(cleanPrompt) ||
         /\bred\s+green\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('tdd', prompt))));
-      return;
+      matches.push({ name: 'tdd', args: '' });
     }
 
-    // Priority 12: Research
-    // "research" alone OR "analyze data" OR "statistics" trigger research skill
+    // Research keywords
     if (/\b(research)\b/i.test(cleanPrompt) ||
         /\banalyze\s+data\b/i.test(cleanPrompt) ||
         /\bstatistics\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('research', prompt))));
-      return;
+      matches.push({ name: 'research', args: '' });
     }
 
-    // Priority 13: Ultrathink/think keywords (keep inline message)
+    // Ultrathink keywords
     if (/\b(ultrathink|think hard|think deeply)\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(ULTRATHINK_MESSAGE)));
-      return;
+      matches.push({ name: 'ultrathink', args: '' });
     }
 
-    // Priority 14: Deepsearch (RESTRICTED patterns)
+    // Deepsearch keywords
     if (/\b(deepsearch)\b/i.test(cleanPrompt) ||
         /\bsearch\s+(the\s+)?(codebase|code|files?|project)\b/i.test(cleanPrompt) ||
         /\bfind\s+(in\s+)?(codebase|code|all\s+files?)\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('deepsearch', prompt))));
-      return;
+      matches.push({ name: 'deepsearch', args: '' });
     }
 
-    // Priority 15: Analyze (RESTRICTED patterns)
+    // Analyze keywords
     if (/\b(deep\s*analyze)\b/i.test(cleanPrompt) ||
         /\binvestigate\s+(the|this|why)\b/i.test(cleanPrompt) ||
         /\bdebug\s+(the|this|why)\b/i.test(cleanPrompt)) {
-      console.log(JSON.stringify(createHookOutput(createSkillInvocation('analyze', prompt))));
+      matches.push({ name: 'analyze', args: '' });
+    }
+
+    // No matches - pass through
+    if (matches.length === 0) {
+      console.log(JSON.stringify({ continue: true }));
       return;
     }
 
-    // No keywords detected
-    console.log(JSON.stringify({ continue: true }));
+    // Resolve conflicts
+    const resolved = resolveConflicts(matches);
+
+    // Handle cancel specially - clear states and emit
+    if (resolved.length > 0 && resolved[0].name === 'cancel') {
+      clearStateFiles(directory, ['ralph', 'autopilot', 'ultrapilot', 'ultrawork', 'ecomode', 'swarm', 'pipeline']);
+      console.log(JSON.stringify(createHookOutput(createSkillInvocation('cancel', prompt))));
+      return;
+    }
+
+    // Activate states for modes that need them
+    const stateModes = resolved.filter(m => ['ralph', 'autopilot', 'ultrapilot', 'ultrawork', 'ecomode'].includes(m.name));
+    for (const mode of stateModes) {
+      activateState(directory, prompt, mode.name, sessionId);
+    }
+
+    // Special: Ralph with ultrawork (only if ecomode NOT present)
+    const hasRalph = resolved.some(m => m.name === 'ralph');
+    const hasEcomode = resolved.some(m => m.name === 'ecomode');
+    const hasUltrawork = resolved.some(m => m.name === 'ultrawork');
+    if (hasRalph && !hasEcomode && !hasUltrawork) {
+      activateState(directory, prompt, 'ultrawork', sessionId);
+    }
+
+    // Handle ultrathink specially - prepend message instead of skill invocation
+    const ultrathinkIndex = resolved.findIndex(m => m.name === 'ultrathink');
+    if (ultrathinkIndex !== -1) {
+      // Remove ultrathink from skill list
+      resolved.splice(ultrathinkIndex, 1);
+
+      // If ultrathink was the only match, emit message
+      if (resolved.length === 0) {
+        console.log(JSON.stringify(createHookOutput(ULTRATHINK_MESSAGE)));
+        return;
+      }
+
+      // Otherwise, prepend ultrathink message to skill invocation
+      const skillMessage = createMultiSkillInvocation(resolved, prompt);
+      console.log(JSON.stringify(createHookOutput(ULTRATHINK_MESSAGE + skillMessage)));
+      return;
+    }
+
+    // Emit skill invocation(s)
+    console.log(JSON.stringify(createHookOutput(createMultiSkillInvocation(resolved, prompt))));
   } catch (error) {
     // On any error, allow continuation
     console.log(JSON.stringify({ continue: true }));
