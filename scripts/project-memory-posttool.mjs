@@ -5,18 +5,33 @@
  * Learns from tool outputs and updates project memory
  */
 
-import { learnFromToolOutput } from '../dist/hooks/project-memory/learner.js';
-import { findProjectRoot } from '../dist/hooks/rules-injector/finder.js';
+import { readStdin } from './lib/stdin.mjs';
 
-/**
- * Read JSON input from stdin
- */
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
+// Debug logging helper - gated behind OMC_DEBUG env var
+const debugLog = (...args) => {
+  if (process.env.OMC_DEBUG) console.error('[omc:debug:project-memory]', ...args);
+};
+
+// Dynamic imports with graceful fallback (separate try-catch for partial availability)
+let learnFromToolOutput = null;
+let findProjectRoot = null;
+try {
+  learnFromToolOutput = (await import('../dist/hooks/project-memory/learner.js')).learnFromToolOutput;
+} catch (err) {
+  if (err?.code === 'ERR_MODULE_NOT_FOUND' && /dist\//.test(err?.message)) {
+    debugLog('dist/ learner module not found, skipping');
+  } else {
+    debugLog('Unexpected learner import error:', err?.code, err?.message);
   }
-  return Buffer.concat(chunks).toString('utf-8');
+}
+try {
+  findProjectRoot = (await import('../dist/hooks/rules-injector/finder.js')).findProjectRoot;
+} catch (err) {
+  if (err?.code === 'ERR_MODULE_NOT_FOUND' && /dist\//.test(err?.message)) {
+    debugLog('dist/ finder module not found, skipping');
+  } else {
+    debugLog('Unexpected finder import error:', err?.code, err?.message);
+  }
 }
 
 /**
@@ -27,16 +42,22 @@ async function main() {
     const input = await readStdin();
     const data = JSON.parse(input);
 
+    // Early exit if imports failed
+    if (!learnFromToolOutput || !findProjectRoot) {
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
+      return;
+    }
+
     // Extract directory and find project root
-    const directory = data.directory || process.cwd();
+    const directory = data.cwd || data.directory || process.cwd();
     const projectRoot = findProjectRoot(directory);
 
     if (projectRoot) {
       // Learn from tool output
       await learnFromToolOutput(
-        data.toolName || '',
-        data.toolInput || {},
-        data.toolOutput || '',
+        data.tool_name || data.toolName || '',
+        data.tool_input || data.toolInput || {},
+        data.tool_response || data.toolOutput || '',
         projectRoot
       );
     }
@@ -44,19 +65,13 @@ async function main() {
     // Return success
     console.log(JSON.stringify({
       continue: true,
-      hookSpecificOutput: {
-        hookEventName: 'PostToolUse',
-        additionalContext: ''
-      }
+      suppressOutput: true
     }));
   } catch (error) {
     // Always continue on error
     console.log(JSON.stringify({
       continue: true,
-      hookSpecificOutput: {
-        hookEventName: 'PostToolUse',
-        additionalContext: ''
-      }
+      suppressOutput: true
     }));
   }
 }

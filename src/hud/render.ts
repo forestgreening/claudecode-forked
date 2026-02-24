@@ -14,7 +14,7 @@ import { renderSkills, renderLastSkill } from './elements/skills.js';
 import { renderContext, renderContextWithBar } from './elements/context.js';
 import { renderBackground } from './elements/background.js';
 import { renderPrd } from './elements/prd.js';
-import { renderRateLimits, renderRateLimitsWithBar } from './elements/limits.js';
+import { renderRateLimits, renderRateLimitsWithBar, renderCustomBuckets } from './elements/limits.js';
 import { renderPermission } from './elements/permission.js';
 import { renderThinking } from './elements/thinking.js';
 import { renderSession } from './elements/session.js';
@@ -22,6 +22,8 @@ import { renderAutopilot } from './elements/autopilot.js';
 import { renderCwd } from './elements/cwd.js';
 import { renderGitRepo, renderGitBranch } from './elements/git.js';
 import { renderModel } from './elements/model.js';
+import { renderCallCounts } from './elements/call-counts.js';
+import { renderContextLimitWarning } from './elements/context-warning.js';
 import {
   getAnalyticsDisplay,
   renderAnalyticsLineWithConfig,
@@ -60,21 +62,36 @@ function renderSessionHealthAnalyticsWithConfig(
   const data = getSessionHealthAnalyticsData(sessionHealth);
   const parts: string[] = [];
 
+  // Health indicator (🟢/🟡/🔴) - controlled by showHealthIndicator
+  const showIndicator = enabledElements.showHealthIndicator ?? true;
+
   // Cost indicator and cost amount (respects showCost)
   if (enabledElements.showCost) {
-    parts.push(data.costIndicator, data.cost);
+    if (showIndicator) {
+      parts.push(data.costIndicator, data.cost);
+    } else {
+      parts.push(data.cost);
+    }
+  } else if (showIndicator) {
+    // Show indicator even without cost
+    parts.push(data.costIndicator);
   }
 
-  // Tokens always shown (not a cost/cache thing)
-  parts.push(data.tokens);
+  // Tokens - controlled by showTokens
+  const showTokens = enabledElements.showTokens ?? true;
+  if (showTokens) {
+    parts.push(data.tokens);
+  }
 
   // Cache (respects showCache)
   if (enabledElements.showCache) {
     parts.push(`Cache: ${data.cache}`);
   }
 
-  // Cost per hour (respects showCost)
-  if (enabledElements.showCost && data.costHour) {
+  // Cost per hour
+  // If showCostPerHour is explicitly set, use it; otherwise default to true (backward compat)
+  const showCostHour = enabledElements.showCostPerHour ?? true;
+  if (showCostHour && enabledElements.showCost && data.costHour) {
     parts.push(data.costHour);
   }
 
@@ -108,9 +125,11 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
         if (cacheEfficiency) lines.push(cacheEfficiency);
       }
 
-      // Budget warning (respects showCost)
-      if (enabledElements.showCost) {
-        const budgetWarning = renderBudgetWarning(context.sessionHealth);
+      // Budget warning
+      // If showBudgetWarning is explicitly set, use it; otherwise default to true (backward compat)
+      const showBudgetAnalytics = enabledElements.showBudgetWarning ?? true;
+      if (showBudgetAnalytics && enabledElements.showCost) {
+        const budgetWarning = renderBudgetWarning(context.sessionHealth, config.thresholds);
         if (budgetWarning) lines.push(budgetWarning);
       }
     }
@@ -153,13 +172,18 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
 
   // Model name
   if (enabledElements.model && context.modelName) {
-    const modelElement = renderModel(context.modelName);
+    const modelElement = renderModel(context.modelName, enabledElements.modelFormat);
     if (modelElement) gitElements.push(modelElement);
   }
 
-  // [OMC] label
+  // [OMC#X.Y.Z] label with optional update notification
   if (enabledElements.omcLabel) {
-    elements.push(bold('[OMC]'));
+    const versionTag = context.omcVersion ? `#${context.omcVersion}` : '';
+    if (context.updateAvailable) {
+      elements.push(bold(`[OMC${versionTag}] -> ${context.updateAvailable} omc update`));
+    } else {
+      elements.push(bold(`[OMC${versionTag}]`));
+    }
   }
 
   // Rate limits (5h and weekly)
@@ -168,6 +192,13 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
       ? renderRateLimitsWithBar(context.rateLimits)
       : renderRateLimits(context.rateLimits);
     if (limits) elements.push(limits);
+  }
+
+  // Custom rate limit buckets
+  if (context.customBuckets) {
+    const thresholdPercent = config.rateLimitsProvider?.resetsAtDisplayThresholdPercent;
+    const custom = renderCustomBuckets(context.customBuckets, thresholdPercent);
+    if (custom) elements.push(custom);
   }
 
   // Permission status indicator (heuristic-based)
@@ -184,16 +215,23 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
 
   // Session health indicator
   if (enabledElements.sessionHealth && context.sessionHealth) {
-    const session = renderSession(context.sessionHealth);
-    if (session) elements.push(session);
+    // Session duration display (session:19m)
+    // If showSessionDuration is explicitly set, use it; otherwise default to true (backward compat)
+    const showDuration = enabledElements.showSessionDuration ?? true;
+    if (showDuration) {
+      const session = renderSession(context.sessionHealth);
+      if (session) elements.push(session);
+    }
 
     // Add analytics inline if available (respects showCache/showCost)
     const analytics = renderSessionHealthAnalyticsWithConfig(context.sessionHealth, enabledElements);
     if (analytics) elements.push(analytics);
 
-    // Add budget warning to detail lines if needed (respects showCost)
-    if (enabledElements.showCost) {
-      const warning = renderBudgetWarning(context.sessionHealth);
+    // Add budget warning to detail lines
+    // If showBudgetWarning is explicitly set, use it; otherwise default to true (backward compat)
+    const showBudget = enabledElements.showBudgetWarning ?? true;
+    if (showBudget && enabledElements.showCost) {
+      const warning = renderBudgetWarning(context.sessionHealth, config.thresholds);
       if (warning) detailLines.push(warning);
     }
   }
@@ -262,6 +300,26 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
     const bg = renderBackground(context.backgroundTasks);
     if (bg) elements.push(bg);
   }
+
+  // Call counts on the right side of the status line (Issue #710)
+  // Controlled by showCallCounts config option (default: true)
+  const showCounts = enabledElements.showCallCounts ?? true;
+  if (showCounts) {
+    const counts = renderCallCounts(
+      context.toolCallCount,
+      context.agentCallCount,
+      context.skillCallCount,
+    );
+    if (counts) elements.push(counts);
+  }
+
+  // Context limit warning banner (shown when ctx% >= threshold)
+  const ctxWarning = renderContextLimitWarning(
+    context.contextPercent,
+    config.contextLimitWarning.threshold,
+    config.contextLimitWarning.autoCompact
+  );
+  if (ctxWarning) detailLines.push(ctxWarning);
 
   // Compose output
   const outputLines: string[] = [];

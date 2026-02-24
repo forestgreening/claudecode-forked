@@ -1,22 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * PreToolUse Hook: Sisyphus Reminder Enforcer (Node.js)
+ * PreToolUse Hook: OMC Reminder Enforcer (Node.js)
  * Injects contextual reminders before every tool execution
  * Cross-platform: Windows, macOS, Linux
  */
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-
-// Read all stdin
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf-8');
-}
+import { pathToFileURL } from 'url';
+import { readStdin } from './lib/stdin.mjs';
 
 // Simple JSON field extraction
 function extractJsonField(input, field, defaultValue = '') {
@@ -115,21 +108,72 @@ function generateMessage(toolName, todoStatus) {
   return messages[toolName] || `${todoStatus}The boulder never stops. Continue until all tasks complete.`;
 }
 
+// Record Skill/Task invocations to flow trace (best-effort)
+async function recordToolInvocation(data, directory) {
+  try {
+    const toolName = data.toolName || data.tool_name || '';
+    const sessionId = data.session_id || data.sessionId || '';
+    if (!sessionId || !directory) return;
+
+    if (toolName === 'Skill') {
+      const skillName = data.toolInput?.skill || data.tool_input?.skill || '';
+      if (skillName) {
+        const { recordSkillInvoked } = await import('../dist/hooks/subagent-tracker/flow-tracer.js');
+        recordSkillInvoked(directory, sessionId, skillName);
+      }
+    }
+  } catch { /* best-effort, never block tool execution */ }
+}
+
 async function main() {
+  // Skip guard: check OMC_SKIP_HOOKS env var (see issue #838)
+  const _skipHooks = (process.env.OMC_SKIP_HOOKS || '').split(',').map(s => s.trim());
+  if (process.env.DISABLE_OMC === '1' || _skipHooks.includes('pre-tool-use')) {
+    console.log(JSON.stringify({ continue: true }));
+    return;
+  }
+
   try {
     const input = await readStdin();
 
-    const toolName = extractJsonField(input, 'toolName', 'unknown');
-    const directory = extractJsonField(input, 'directory', process.cwd());
+    const toolName = extractJsonField(input, 'tool_name') || extractJsonField(input, 'toolName', 'unknown');
+    const directory = extractJsonField(input, 'cwd') || extractJsonField(input, 'directory', process.cwd());
+
+    // Record Skill invocations to flow trace
+    let data = {};
+    try { data = JSON.parse(input); } catch {}
+    recordToolInvocation(data, directory);
+
+    // Send notification when AskUserQuestion is about to execute (user input needed)
+    // Fires in PreToolUse so users get notified BEFORE the tool blocks for input (#597)
+    if (toolName === 'AskUserQuestion') {
+      try {
+        const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+        if (pluginRoot) {
+          const { notify } = await import(pathToFileURL(join(pluginRoot, 'dist', 'notifications', 'index.js')).href);
+
+          const toolInput = data.toolInput || data.tool_input || {};
+          const questions = toolInput.questions || [];
+          const questionText = questions.map(q => q.question || '').filter(Boolean).join('; ') || 'User input requested';
+          const sessionId = data.session_id || data.sessionId || '';
+
+          // Fire and forget - don't block tool execution
+          notify('ask-user-question', {
+            sessionId,
+            projectPath: directory,
+            question: questionText,
+          }).catch(() => {});
+        }
+      } catch {
+        // Notification not available, skip
+      }
+    }
 
     const todoStatus = getTodoStatus(directory);
 
     let message;
-    if (toolName === 'Task') {
-      let toolInput = null;
-      try {
-        toolInput = JSON.parse(input).toolInput;
-      } catch {}
+    if (toolName === 'Task' || toolName === 'TaskCreate' || toolName === 'TaskUpdate') {
+      const toolInput = data.toolInput || data.tool_input || null;
       message = generateAgentSpawnMessage(toolInput, directory, todoStatus);
     } else {
       message = generateMessage(toolName, todoStatus);
@@ -144,7 +188,7 @@ async function main() {
     }, null, 2));
   } catch (error) {
     // On error, always continue
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
   }
 }
 

@@ -6,17 +6,7 @@
  */
 
 import { processPreCompact } from '../dist/hooks/project-memory/pre-compact.js';
-
-/**
- * Read JSON input from stdin
- */
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf-8');
-}
+import { readStdin } from './lib/stdin.mjs';
 
 /**
  * Main hook execution
@@ -35,6 +25,7 @@ async function main() {
     // Always continue on error
     console.log(JSON.stringify({
       continue: true,
+      suppressOutput: true,
     }));
   }
 }

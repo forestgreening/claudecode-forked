@@ -5,7 +5,7 @@
  * Minimal continuation enforcer for all OMC modes.
  * Stripped down for reliability — no optional imports, no PRD, no notepad pruning.
  *
- * Supported modes: ralph, autopilot, ultrapilot, swarm, ultrawork, ecomode, ultraqa, pipeline
+ * Supported modes: ralph, autopilot, ultrapilot, swarm, ultrawork, ultraqa, pipeline
  */
 
 import {
@@ -14,6 +14,7 @@ import {
   writeFileSync,
   readdirSync,
   mkdirSync,
+  unlinkSync,
 } from "fs";
 import { join, dirname, resolve, normalize } from "path";
 import { homedir } from "os";
@@ -48,6 +49,81 @@ function writeJsonFile(path, data) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Read last tool error from state directory.
+ * Returns null if file doesn't exist or error is stale (>60 seconds old).
+ */
+function readLastToolError(stateDir) {
+  const errorPath = join(stateDir, "last-tool-error.json");
+  const toolError = readJsonFile(errorPath);
+
+  if (!toolError || !toolError.timestamp) return null;
+
+  // Check staleness - errors older than 60 seconds are ignored
+  const parsedTime = new Date(toolError.timestamp).getTime();
+  if (!Number.isFinite(parsedTime)) {
+    return null; // Invalid timestamp = stale
+  }
+  const age = Date.now() - parsedTime;
+  if (age > 60000) return null;
+
+  return toolError;
+}
+
+/**
+ * Clear tool error state file atomically.
+ */
+function clearToolErrorState(stateDir) {
+  const errorPath = join(stateDir, "last-tool-error.json");
+  try {
+    if (existsSync(errorPath)) {
+      unlinkSync(errorPath);
+    }
+  } catch {
+    // Ignore errors - file may have been removed already
+  }
+}
+
+/**
+ * Generate retry guidance message for tool errors.
+ * After 5+ retries, suggests alternative approaches.
+ */
+function getToolErrorRetryGuidance(toolError) {
+  if (!toolError) return "";
+
+  const retryCount = toolError.retry_count || 1;
+  const toolName = toolError.tool_name || "unknown";
+  const error = toolError.error || "Unknown error";
+
+  if (retryCount >= 5) {
+    return `[TOOL ERROR - ALTERNATIVE APPROACH NEEDED]
+The "${toolName}" operation has failed ${retryCount} times.
+
+STOP RETRYING THE SAME APPROACH. Instead:
+1. Try a completely different command or approach
+2. Check if the environment/dependencies are correct
+3. Consider breaking down the task differently
+4. If stuck, ask the user for guidance
+
+`;
+  }
+
+  return `[TOOL ERROR - RETRY REQUIRED]
+The previous "${toolName}" operation failed.
+
+Error: ${error}
+
+REQUIRED ACTIONS:
+1. Analyze why the command failed
+2. Fix the issue (wrong path? permission? syntax? missing dependency?)
+3. RETRY the operation with corrected parameters
+4. Continue with your original task after success
+
+Do NOT skip this step. Do NOT move on without fixing the error.
+
+`;
 }
 
 /**
@@ -145,6 +221,35 @@ function readStateFile(stateDir, globalStateDir, filename) {
   if (state) return { state, path: globalPath, isGlobal: true };
 
   return { state: null, path: localPath, isGlobal: false }; // Default to local for new writes
+}
+
+const SESSION_ID_ALLOWLIST = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/;
+
+function sanitizeSessionId(sessionId) {
+  if (!sessionId || typeof sessionId !== "string") return "";
+  return SESSION_ID_ALLOWLIST.test(sessionId) ? sessionId : "";
+}
+
+function isValidSessionId(sessionId) {
+  return typeof sessionId === "string" && SESSION_ID_ALLOWLIST.test(sessionId);
+}
+
+/**
+ * Read state file with session-scoped path support.
+ * If sessionId is provided, ONLY reads the session-scoped path.
+ * Falls back to legacy local/global paths when sessionId is not provided.
+ */
+
+function readStateFileWithSession(stateDir, globalStateDir, filename, sessionId) {
+  const safeSessionId = sanitizeSessionId(sessionId);
+  if (safeSessionId) {
+    const sessionsDir = join(stateDir, "sessions", safeSessionId);
+    const sessionPath = join(sessionsDir, filename);
+    const state = readJsonFile(sessionPath);
+    return { state, path: sessionPath, isGlobal: false };
+  }
+
+  return readStateFile(stateDir, globalStateDir, filename);
 }
 
 /**
@@ -300,12 +405,14 @@ async function main() {
       data = JSON.parse(input);
     } catch {
       // Invalid JSON - allow stop to prevent hanging
-      process.stdout.write(JSON.stringify({ continue: true }) + "\n");
+      process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }) + "\n");
       return;
     }
 
-    const directory = data.directory || process.cwd();
-    const sessionId = data.sessionId || data.session_id || "";
+    const directory = data.cwd || data.directory || process.cwd();
+    const sessionIdRaw = data.sessionId || data.session_id || data.sessionid || "";
+    const sessionId = sanitizeSessionId(sessionIdRaw);
+    const hasValidSessionId = isValidSessionId(sessionIdRaw);
     const stateDir = join(directory, ".omc", "state");
     const globalStateDir = join(homedir(), ".omc", "state");
 
@@ -313,47 +420,52 @@ async function main() {
     // Blocking these causes a deadlock where Claude Code cannot compact.
     // See: https://github.com/Yeachan-Heo/oh-my-claudecode/issues/213
     if (isContextLimitStop(data)) {
-      console.log(JSON.stringify({ continue: true }));
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
 
     // Respect user abort (Ctrl+C, cancel)
     if (isUserAbort(data)) {
-      console.log(JSON.stringify({ continue: true }));
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
 
-    // Read all mode states (local-first with fallback to global)
-    const ralph = readStateFile(stateDir, globalStateDir, "ralph-state.json");
-    const autopilot = readStateFile(
+    // Read all mode states (session-scoped when sessionId provided)
+    const ralph = readStateFileWithSession(
+      stateDir,
+      globalStateDir,
+      "ralph-state.json",
+      sessionId,
+    );
+    const autopilot = readStateFileWithSession(
       stateDir,
       globalStateDir,
       "autopilot-state.json",
+      sessionId,
     );
-    const ultrapilot = readStateFile(
+    const ultrapilot = readStateFileWithSession(
       stateDir,
       globalStateDir,
       "ultrapilot-state.json",
+      sessionId,
     );
-    const ultrawork = readStateFile(
+    const ultrawork = readStateFileWithSession(
       stateDir,
       globalStateDir,
       "ultrawork-state.json",
+      sessionId,
     );
-    const ecomode = readStateFile(
-      stateDir,
-      globalStateDir,
-      "ecomode-state.json",
-    );
-    const ultraqa = readStateFile(
+    const ultraqa = readStateFileWithSession(
       stateDir,
       globalStateDir,
       "ultraqa-state.json",
+      sessionId,
     );
-    const pipeline = readStateFile(
+    const pipeline = readStateFileWithSession(
       stateDir,
       globalStateDir,
       "pipeline-state.json",
+      sessionId,
     );
 
     // Swarm uses swarm-summary.json (not swarm-state.json) + marker file
@@ -372,18 +484,45 @@ async function main() {
       !isStaleState(ralph.state) &&
       isStateForCurrentProject(ralph.state, directory, ralph.isGlobal)
     ) {
-      const iteration = ralph.state.iteration || 1;
-      const maxIter = ralph.state.max_iterations || 100;
+      const sessionMatches = hasValidSessionId
+        ? ralph.state.session_id === sessionId
+        : !ralph.state.session_id || ralph.state.session_id === sessionId;
+      if (sessionMatches) {
+        const iteration = ralph.state.iteration || 1;
+        const maxIter = ralph.state.max_iterations || 100;
 
-      if (iteration < maxIter) {
-        ralph.state.iteration = iteration + 1;
+        if (iteration < maxIter) {
+          const toolError = readLastToolError(stateDir);
+          const errorGuidance = getToolErrorRetryGuidance(toolError);
+
+          ralph.state.iteration = iteration + 1;
+          ralph.state.last_checked_at = new Date().toISOString();
+          writeJsonFile(ralph.path, ralph.state);
+
+          let reason = `[RALPH LOOP - ITERATION ${iteration + 1}/${maxIter}] Work is NOT done. Continue working.\nWhen FULLY complete (after Architect verification), run /oh-my-claudecode:cancel to cleanly exit ralph mode and clean up all state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.\n${ralph.state.prompt ? `Task: ${ralph.state.prompt}` : ""}`;
+          if (errorGuidance) {
+            reason = errorGuidance + reason;
+          }
+
+          console.log(
+            JSON.stringify({
+              decision: "block",
+              reason,
+            }),
+          );
+          return;
+        }
+
+        // Do not silently stop Ralph once it hits max iterations; extend and keep going.
+        // This prevents abrupt stops in long-running loops where the model hasn't finished.
+        ralph.state.max_iterations = maxIter + 10;
         ralph.state.last_checked_at = new Date().toISOString();
         writeJsonFile(ralph.path, ralph.state);
 
         console.log(
           JSON.stringify({
             decision: "block",
-            reason: `[RALPH LOOP - ITERATION ${iteration + 1}/${maxIter}] Work is NOT done. Continue working.\nWhen FULLY complete (after Architect verification), run /oh-my-claudecode:cancel to cleanly exit ralph mode and clean up all state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.\n${ralph.state.prompt ? `Task: ${ralph.state.prompt}` : ""}`,
+            reason: `[RALPH LOOP - EXTENDED] Max iterations reached; extending to ${ralph.state.max_iterations} and continuing. When FULLY complete (after Architect verification), run /oh-my-claudecode:cancel (or --force).`,
           }),
         );
         return;
@@ -396,21 +535,34 @@ async function main() {
       !isStaleState(autopilot.state) &&
       isStateForCurrentProject(autopilot.state, directory, autopilot.isGlobal)
     ) {
-      const phase = autopilot.state.phase || "unknown";
-      if (phase !== "complete") {
-        const newCount = (autopilot.state.reinforcement_count || 0) + 1;
-        if (newCount <= 20) {
-          autopilot.state.reinforcement_count = newCount;
-          autopilot.state.last_checked_at = new Date().toISOString();
-          writeJsonFile(autopilot.path, autopilot.state);
+      const sessionMatches = hasValidSessionId
+        ? autopilot.state.session_id === sessionId
+        : !autopilot.state.session_id || autopilot.state.session_id === sessionId;
+      if (sessionMatches) {
+        const phase = autopilot.state.phase || "unspecified";
+        if (phase !== "complete") {
+          const newCount = (autopilot.state.reinforcement_count || 0) + 1;
+          if (newCount <= 20) {
+            const toolError = readLastToolError(stateDir);
+            const errorGuidance = getToolErrorRetryGuidance(toolError);
 
-          console.log(
-            JSON.stringify({
-              decision: "block",
-              reason: `[AUTOPILOT - Phase: ${phase}] Autopilot not complete. Continue working. When all phases are complete, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`,
-            }),
-          );
-          return;
+            autopilot.state.reinforcement_count = newCount;
+            autopilot.state.last_checked_at = new Date().toISOString();
+            writeJsonFile(autopilot.path, autopilot.state);
+
+            let reason = `[AUTOPILOT - Phase: ${phase}] Autopilot not complete. Continue working. When all phases are complete, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`;
+            if (errorGuidance) {
+              reason = errorGuidance + reason;
+            }
+
+            console.log(
+              JSON.stringify({
+                decision: "block",
+                reason,
+              }),
+            );
+            return;
+          }
         }
       }
     }
@@ -419,6 +571,9 @@ async function main() {
     if (
       ultrapilot.state?.active &&
       !isStaleState(ultrapilot.state) &&
+      (hasValidSessionId
+        ? ultrapilot.state.session_id === sessionId
+        : !ultrapilot.state.session_id || ultrapilot.state.session_id === sessionId) &&
       isStateForCurrentProject(ultrapilot.state, directory, ultrapilot.isGlobal)
     ) {
       const workers = ultrapilot.state.workers || [];
@@ -428,14 +583,22 @@ async function main() {
       if (incomplete > 0) {
         const newCount = (ultrapilot.state.reinforcement_count || 0) + 1;
         if (newCount <= 20) {
+          const toolError = readLastToolError(stateDir);
+          const errorGuidance = getToolErrorRetryGuidance(toolError);
+
           ultrapilot.state.reinforcement_count = newCount;
           ultrapilot.state.last_checked_at = new Date().toISOString();
           writeJsonFile(ultrapilot.path, ultrapilot.state);
 
+          let reason = `[ULTRAPILOT] ${incomplete} workers still running. Continue working. When all workers complete, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`;
+          if (errorGuidance) {
+            reason = errorGuidance + reason;
+          }
+
           console.log(
             JSON.stringify({
               decision: "block",
-              reason: `[ULTRAPILOT] ${incomplete} workers still running. Continue working. When all workers complete, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`,
+              reason,
             }),
           );
           return;
@@ -456,14 +619,22 @@ async function main() {
       if (pending > 0) {
         const newCount = (swarmSummary.reinforcement_count || 0) + 1;
         if (newCount <= 15) {
+          const toolError = readLastToolError(stateDir);
+          const errorGuidance = getToolErrorRetryGuidance(toolError);
+
           swarmSummary.reinforcement_count = newCount;
           swarmSummary.last_checked_at = new Date().toISOString();
           writeJsonFile(join(stateDir, "swarm-summary.json"), swarmSummary);
 
+          let reason = `[SWARM ACTIVE] ${pending} tasks remain. Continue working. When all tasks are done, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`;
+          if (errorGuidance) {
+            reason = errorGuidance + reason;
+          }
+
           console.log(
             JSON.stringify({
               decision: "block",
-              reason: `[SWARM ACTIVE] ${pending} tasks remain. Continue working. When all tasks are done, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`,
+              reason,
             }),
           );
           return;
@@ -475,6 +646,9 @@ async function main() {
     if (
       pipeline.state?.active &&
       !isStaleState(pipeline.state) &&
+      (hasValidSessionId
+        ? pipeline.state.session_id === sessionId
+        : !pipeline.state.session_id || pipeline.state.session_id === sessionId) &&
       isStateForCurrentProject(pipeline.state, directory, pipeline.isGlobal)
     ) {
       const currentStage = pipeline.state.current_stage || 0;
@@ -482,14 +656,22 @@ async function main() {
       if (currentStage < totalStages) {
         const newCount = (pipeline.state.reinforcement_count || 0) + 1;
         if (newCount <= 15) {
+          const toolError = readLastToolError(stateDir);
+          const errorGuidance = getToolErrorRetryGuidance(toolError);
+
           pipeline.state.reinforcement_count = newCount;
           pipeline.state.last_checked_at = new Date().toISOString();
           writeJsonFile(pipeline.path, pipeline.state);
 
+          let reason = `[PIPELINE - Stage ${currentStage + 1}/${totalStages}] Pipeline not complete. Continue working. When all stages complete, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`;
+          if (errorGuidance) {
+            reason = errorGuidance + reason;
+          }
+
           console.log(
             JSON.stringify({
               decision: "block",
-              reason: `[PIPELINE - Stage ${currentStage + 1}/${totalStages}] Pipeline not complete. Continue working. When all stages complete, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`,
+              reason,
             }),
           );
           return;
@@ -501,19 +683,30 @@ async function main() {
     if (
       ultraqa.state?.active &&
       !isStaleState(ultraqa.state) &&
+      (hasValidSessionId
+        ? ultraqa.state.session_id === sessionId
+        : !ultraqa.state.session_id || ultraqa.state.session_id === sessionId) &&
       isStateForCurrentProject(ultraqa.state, directory, ultraqa.isGlobal)
     ) {
       const cycle = ultraqa.state.cycle || 1;
       const maxCycles = ultraqa.state.max_cycles || 10;
       if (cycle < maxCycles && !ultraqa.state.all_passing) {
+        const toolError = readLastToolError(stateDir);
+        const errorGuidance = getToolErrorRetryGuidance(toolError);
+
         ultraqa.state.cycle = cycle + 1;
         ultraqa.state.last_checked_at = new Date().toISOString();
         writeJsonFile(ultraqa.path, ultraqa.state);
 
+        let reason = `[ULTRAQA - Cycle ${cycle + 1}/${maxCycles}] Tests not all passing. Continue fixing. When all tests pass, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`;
+        if (errorGuidance) {
+          reason = errorGuidance + reason;
+        }
+
         console.log(
           JSON.stringify({
             decision: "block",
-            reason: `[ULTRAQA - Cycle ${cycle + 1}/${maxCycles}] Tests not all passing. Continue fixing. When all tests pass, run /oh-my-claudecode:cancel to cleanly exit and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force.`,
+            reason,
           }),
         );
         return;
@@ -527,8 +720,9 @@ async function main() {
     if (
       ultrawork.state?.active &&
       !isStaleState(ultrawork.state) &&
-      (!ultrawork.state.session_id ||
-        ultrawork.state.session_id === sessionId) &&
+      (hasValidSessionId
+        ? ultrawork.state.session_id === sessionId
+        : !ultrawork.state.session_id || ultrawork.state.session_id === sessionId) &&
       isStateForCurrentProject(ultrawork.state, directory, ultrawork.isGlobal)
     ) {
       const newCount = (ultrawork.state.reinforcement_count || 0) + 1;
@@ -536,9 +730,12 @@ async function main() {
 
       if (newCount > maxReinforcements) {
         // Max reinforcements reached - allow stop
-        console.log(JSON.stringify({ continue: true }));
+        console.log(JSON.stringify({ continue: true, suppressOutput: true }));
         return;
       }
+
+      const toolError = readLastToolError(stateDir);
+      const errorGuidance = getToolErrorRetryGuidance(toolError);
 
       ultrawork.state.reinforcement_count = newCount;
       ultrawork.state.last_checked_at = new Date().toISOString();
@@ -561,40 +758,8 @@ async function main() {
         reason += `\nTask: ${ultrawork.state.original_prompt}`;
       }
 
-      console.log(JSON.stringify({ decision: "block", reason }));
-      return;
-    }
-
-    // Priority 8: Ecomode - ALWAYS continue while active
-    if (
-      ecomode.state?.active &&
-      !isStaleState(ecomode.state) &&
-      isStateForCurrentProject(ecomode.state, directory, ecomode.isGlobal)
-    ) {
-      const newCount = (ecomode.state.reinforcement_count || 0) + 1;
-      const maxReinforcements = ecomode.state.max_reinforcements || 50;
-
-      if (newCount > maxReinforcements) {
-        // Max reinforcements reached - allow stop
-        console.log(JSON.stringify({ continue: true }));
-        return;
-      }
-
-      ecomode.state.reinforcement_count = newCount;
-      ecomode.state.last_checked_at = new Date().toISOString();
-      writeJsonFile(ecomode.path, ecomode.state);
-
-      let reason = `[ECOMODE #${newCount}/${maxReinforcements}] Mode active.`;
-
-      if (totalIncomplete > 0) {
-        const itemType = taskCount > 0 ? "Tasks" : "todos";
-        reason += ` ${totalIncomplete} incomplete ${itemType} remain. Continue working.`;
-      } else if (newCount >= 3) {
-        // Only suggest cancel after minimum iterations (guard against no-tasks-created scenario)
-        reason += ` If all work is complete, run /oh-my-claudecode:cancel to cleanly exit ecomode and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force. Otherwise, continue working.`;
-      } else {
-        // Early iterations with no tasks yet - just tell LLM to continue
-        reason += ` Continue working - create Tasks to track your progress.`;
+      if (errorGuidance) {
+        reason = errorGuidance + reason;
       }
 
       console.log(JSON.stringify({ decision: "block", reason }));
@@ -602,7 +767,7 @@ async function main() {
     }
 
     // No blocking needed
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
   } catch (error) {
     // On any error, allow stop rather than blocking forever
     // CRITICAL: Use process.stdout.write instead of console.log to avoid
@@ -616,7 +781,7 @@ async function main() {
       // Ignore stderr errors - we just need to return valid JSON
     }
     try {
-      process.stdout.write(JSON.stringify({ continue: true }) + "\n");
+      process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }) + "\n");
     } catch {
       // If stdout write fails, the hook will timeout and Claude Code will proceed
       // This is better than hanging forever
@@ -635,7 +800,7 @@ process.on("uncaughtException", (error) => {
     // Ignore
   }
   try {
-    process.stdout.write(JSON.stringify({ continue: true }) + "\n");
+    process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }) + "\n");
   } catch {
     // If we can't write, just exit
   }
@@ -651,7 +816,7 @@ process.on("unhandledRejection", (error) => {
     // Ignore
   }
   try {
-    process.stdout.write(JSON.stringify({ continue: true }) + "\n");
+    process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }) + "\n");
   } catch {
     // If we can't write, just exit
   }
@@ -669,7 +834,7 @@ const safetyTimeout = setTimeout(() => {
     // Ignore
   }
   try {
-    process.stdout.write(JSON.stringify({ continue: true }) + "\n");
+    process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }) + "\n");
   } catch {
     // If we can't write, just exit
   }

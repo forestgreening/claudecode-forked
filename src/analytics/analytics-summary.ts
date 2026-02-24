@@ -93,7 +93,7 @@ function updateTopAgents(
  * Calculate cache hit rate percentage
  */
 function calculateCacheHitRate(totals: AnalyticsSummary['totals']): number {
-  const total = totals.inputTokens + totals.cacheCreationTokens;
+  const total = totals.inputTokens + totals.cacheCreationTokens + totals.cacheReadTokens;
   if (total === 0) return 0;
   return (totals.cacheReadTokens / total) * 100;
 }
@@ -197,7 +197,7 @@ export async function loadAnalyticsFast(sessionId: string): Promise<AnalyticsSum
 
     // Need to rebuild (incremental if summary exists)
     return await rebuildSummaryIncremental(sessionId, summaryPath, logPath);
-  } catch (error) {
+  } catch (_error) {
     // No summary exists yet or error reading
     return null;
   }

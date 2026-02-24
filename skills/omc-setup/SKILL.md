@@ -7,6 +7,8 @@ description: Setup and configure oh-my-claudecode (the ONLY command you need to 
 
 This is the **only command you need to learn**. After running this, everything else is automatic.
 
+Note: All `~/.claude/...` paths in this guide respect `CLAUDE_CONFIG_DIR` when that environment variable is set.
+
 ## Pre-Setup Check: Already Configured?
 
 **CRITICAL**: Before doing anything else, check if setup has already been completed. This prevents users from having to re-run the full setup wizard after every update.
@@ -509,21 +511,8 @@ EOF
 Clear old cached plugin versions to avoid conflicts:
 
 ```bash
-# Clear stale plugin cache versions
-CACHE_DIR="$HOME/.claude/plugins/cache/omc/oh-my-claudecode"
-if [ -d "$CACHE_DIR" ]; then
-  LATEST=$(ls -1 "$CACHE_DIR" | sort -V | tail -1)
-  CLEARED=0
-  for dir in "$CACHE_DIR"/*; do
-    if [ "$(basename "$dir")" != "$LATEST" ]; then
-      rm -rf "$dir"
-      CLEARED=$((CLEARED + 1))
-    fi
-  done
-  [ $CLEARED -gt 0 ] && echo "Cleared $CLEARED stale cache version(s)" || echo "Cache is clean"
-else
-  echo "No cache directory found (normal for new installs)"
-fi
+# Clear stale plugin cache versions (cross-platform)
+node -e "const p=require('path'),f=require('fs'),h=require('os').homedir(),d=process.env.CLAUDE_CONFIG_DIR||p.join(h,'.claude'),b=p.join(d,'plugins','cache','omc','oh-my-claudecode');try{const v=f.readdirSync(b).filter(x=>/^\d/.test(x)).sort((a,c)=>a.localeCompare(c,void 0,{numeric:true}));if(v.length<=1){console.log('Cache is clean');process.exit()}v.slice(0,-1).forEach(x=>{f.rmSync(p.join(b,x),{recursive:true,force:true})});console.log('Cleared',v.length-1,'stale cache version(s)')}catch{console.log('No cache directory found (normal for new installs)')}"
 ```
 
 ## Step 3.6: Check for Updates
@@ -531,27 +520,20 @@ fi
 Notify user if a newer version is available:
 
 ```bash
-# Detect installed version
-INSTALLED_VERSION=""
-
-# Try cache directory first
-if [ -d "$HOME/.claude/plugins/cache/omc/oh-my-claudecode" ]; then
-  INSTALLED_VERSION=$(ls -1 "$HOME/.claude/plugins/cache/omc/oh-my-claudecode" | sort -V | tail -1)
-fi
-
-# Try .omc-version.json second
-if [ -z "$INSTALLED_VERSION" ] && [ -f ".omc-version.json" ]; then
-  INSTALLED_VERSION=$(grep -oE '"version":\s*"[^"]+' .omc-version.json | cut -d'"' -f4)
-fi
-
-# Try CLAUDE.md header third (local first, then global)
-if [ -z "$INSTALLED_VERSION" ]; then
-  if [ -f ".claude/CLAUDE.md" ]; then
-    INSTALLED_VERSION=$(grep -m1 "^# oh-my-claudecode" .claude/CLAUDE.md 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/^v//')
-  elif [ -f "$HOME/.claude/CLAUDE.md" ]; then
-    INSTALLED_VERSION=$(grep -m1 "^# oh-my-claudecode" "$HOME/.claude/CLAUDE.md" 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/^v//')
-  fi
-fi
+# Detect installed version (cross-platform)
+node -e "
+const p=require('path'),f=require('fs'),h=require('os').homedir();
+const d=process.env.CLAUDE_CONFIG_DIR||p.join(h,'.claude');
+let v='';
+// Try cache directory first
+const b=p.join(d,'plugins','cache','omc','oh-my-claudecode');
+try{const vs=f.readdirSync(b).filter(x=>/^\d/.test(x)).sort((a,c)=>a.localeCompare(c,void 0,{numeric:true}));if(vs.length)v=vs[vs.length-1]}catch{}
+// Try .omc-version.json second
+if(v==='')try{const j=JSON.parse(f.readFileSync('.omc-version.json','utf-8'));v=j.version||''}catch{}
+// Try CLAUDE.md header third
+if(v==='')for(const c of['.claude/CLAUDE.md',p.join(d,'CLAUDE.md')]){try{const m=f.readFileSync(c,'utf-8').match(/^# oh-my-claudecode.*?(v?\d+\.\d+\.\d+)/m);if(m){v=m[1].replace(/^v/,'');break}}catch{}}
+console.log('Installed:',v||'(not found)');
+"
 
 # Check npm for latest version
 LATEST_VERSION=$(npm view oh-my-claude-sisyphus version 2>/dev/null)
@@ -581,7 +563,6 @@ Use the AskUserQuestion tool to prompt the user:
 
 **Options:**
 1. **ultrawork (maximum capability)** - Uses all agent tiers including Opus for complex tasks. Best for challenging work where quality matters most. (Recommended)
-2. **ecomode (token efficient)** - Prefers Haiku/Sonnet agents, avoids Opus. Best for pro-plan users who want cost efficiency.
 
 Store the preference in `~/.claude/.omc-config.json`:
 
@@ -596,21 +577,13 @@ else
   EXISTING='{}'
 fi
 
-# Set defaultExecutionMode (replace USER_CHOICE with "ultrawork" or "ecomode")
+# Set defaultExecutionMode (replace USER_CHOICE with "ultrawork" or "")
 echo "$EXISTING" | jq --arg mode "USER_CHOICE" '. + {defaultExecutionMode: $mode, configuredAt: (now | todate)}' > "$CONFIG_FILE"
 echo "Default execution mode set to: USER_CHOICE"
 ```
 
-**Note**: This preference ONLY affects generic keywords ("fast", "parallel"). Explicit keywords ("ulw", "eco") always override this preference.
+**Note**: This preference ONLY affects generic keywords ("fast", "parallel"). Explicit keywords ("ulw") always override this preference.
 
-### Optional: Disable Ecomode Entirely
-
-If the user wants to disable ecomode completely (so ecomode keywords are ignored), add to the config:
-
-```bash
-echo "$EXISTING" | jq '. + {ecomode: {enabled: false}}' > "$CONFIG_FILE"
-echo "Ecomode disabled completely"
-```
 
 ## Step 3.8: Install CLI Analytics Tools (Optional)
 
@@ -627,8 +600,8 @@ Ask user: "Would you like to install the OMC CLI for standalone analytics? (Reco
 The CLI (`omc` command) is **no longer supported** via npm/bun global install.
 
 All functionality is available through the plugin system:
-- Use `/oh-my-claudecode:help` for guidance
-- Use `/oh-my-claudecode:doctor` for diagnostics
+- Use `/oh-my-claudecode:omc-help` for guidance
+- Use `/oh-my-claudecode:omc-doctor` for diagnostics
 
 Skip this step - the plugin provides all features.
 
@@ -712,6 +685,202 @@ If yes, invoke the mcp-setup skill:
 
 If no, skip to next step.
 
+## Step 5.5: Configure Agent Teams (Optional)
+
+**Note**: If resuming and lastCompletedStep >= 5.5, skip to Step 6.
+
+Agent teams are an experimental Claude Code feature that lets you spawn N coordinated agents working on a shared task list with inter-agent messaging. **Teams are disabled by default** and require enabling via `settings.json`.
+
+Reference: https://code.claude.com/docs/en/agent-teams
+
+Use the AskUserQuestion tool to prompt:
+
+**Question:** "Would you like to enable agent teams? Teams let you spawn coordinated agents (e.g., `/team 3:executor 'fix all errors'`). This is an experimental Claude Code feature."
+
+**Options:**
+1. **Yes, enable teams (Recommended)** - Enable the experimental feature and configure defaults
+2. **No, skip** - Leave teams disabled (can enable later)
+
+### If User Chooses YES:
+
+#### Step 5.5.1: Enable Agent Teams in settings.json
+
+**CRITICAL**: Agent teams require `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to be set in `~/.claude/settings.json`. This must be done carefully to preserve existing user settings.
+
+First, read the current settings.json:
+
+```bash
+SETTINGS_FILE="$HOME/.claude/settings.json"
+
+if [ -f "$SETTINGS_FILE" ]; then
+  echo "Current settings.json found"
+  cat "$SETTINGS_FILE"
+else
+  echo "No settings.json found - will create one"
+fi
+```
+
+Then use the Read tool to read `~/.claude/settings.json` (if it exists). Use the Edit tool to merge the teams configuration while preserving ALL existing settings.
+
+**If settings.json exists and has an `env` key**, merge the new env var into it:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+```
+
+Use jq to safely merge without overwriting existing settings:
+
+```bash
+SETTINGS_FILE="$HOME/.claude/settings.json"
+
+if [ -f "$SETTINGS_FILE" ]; then
+  # Merge env var into existing settings, preserving everything else
+  TEMP_FILE=$(mktemp)
+  jq '.env = (.env // {} | . + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})' "$SETTINGS_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$SETTINGS_FILE"
+  echo "Added CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS to existing settings.json"
+else
+  # Create new settings.json with just the teams env var
+  mkdir -p "$(dirname "$SETTINGS_FILE")"
+  cat > "$SETTINGS_FILE" << 'SETTINGS_EOF'
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+SETTINGS_EOF
+  echo "Created settings.json with teams enabled"
+fi
+```
+
+**IMPORTANT**: The Edit tool is preferred for modifying settings.json when possible, since it preserves formatting and comments. The jq approach above is the fallback for when the file needs structural merging.
+
+#### Step 5.5.2: Configure Teammate Display Mode
+
+Use the AskUserQuestion tool:
+
+**Question:** "How should teammates be displayed?"
+
+**Options:**
+1. **Auto (Recommended)** - Uses split panes if in tmux, otherwise in-process. Best for most users.
+2. **In-process** - All teammates in your main terminal. Use Shift+Up/Down to select. Works everywhere.
+3. **Split panes (tmux)** - Each teammate in its own pane. Requires tmux or iTerm2.
+
+If user chooses anything other than "Auto", add `teammateMode` to settings.json:
+
+```bash
+SETTINGS_FILE="$HOME/.claude/settings.json"
+
+# TEAMMATE_MODE is "in-process" or "tmux" based on user choice
+# Skip this if user chose "Auto" (that's the default)
+jq --arg mode "TEAMMATE_MODE" '. + {teammateMode: $mode}' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+echo "Teammate display mode set to: TEAMMATE_MODE"
+```
+
+#### Step 5.5.3: Configure Team Defaults in omc-config
+
+Use the AskUserQuestion tool with multiple questions:
+
+**Question 1:** "How many agents should teams spawn by default?"
+
+**Options:**
+1. **3 agents (Recommended)** - Good balance of speed and resource usage
+2. **5 agents (maximum)** - Maximum parallelism for large tasks
+3. **2 agents** - Conservative, for smaller projects
+
+**Question 2:** "Which agent type should teammates use by default?"
+
+**Options:**
+1. **executor (Recommended)** - General-purpose code implementation agent
+2. **build-fixer** - Specialized for build/type error fixing
+3. **designer** - Specialized for UI/frontend work
+
+Store the team configuration in `~/.claude/.omc-config.json`:
+
+```bash
+CONFIG_FILE="$HOME/.claude/.omc-config.json"
+mkdir -p "$(dirname "$CONFIG_FILE")"
+
+if [ -f "$CONFIG_FILE" ]; then
+  EXISTING=$(cat "$CONFIG_FILE")
+else
+  EXISTING='{}'
+fi
+
+# Replace MAX_AGENTS, AGENT_TYPE with user choices
+echo "$EXISTING" | jq \
+  --argjson maxAgents MAX_AGENTS \
+  --arg agentType "AGENT_TYPE" \
+  '. + {team: {maxAgents: $maxAgents, defaultAgentType: $agentType, monitorIntervalMs: 30000, shutdownTimeoutMs: 15000}}' > "$CONFIG_FILE"
+
+echo "Team configuration saved:"
+echo "  Max agents: MAX_AGENTS"
+echo "  Default agent: AGENT_TYPE"
+echo "  Model: teammates inherit your session model"
+```
+
+**Note:** Teammates do not have a separate model default. Each teammate is a full Claude Code session that inherits your configured model. Subagents spawned by teammates can use any model tier.
+
+#### Verify settings.json Integrity
+
+After all modifications, verify settings.json is valid JSON and contains the expected keys:
+
+```bash
+SETTINGS_FILE="$HOME/.claude/settings.json"
+
+# Verify JSON is valid
+if jq empty "$SETTINGS_FILE" 2>/dev/null; then
+  echo "settings.json: valid JSON"
+else
+  echo "ERROR: settings.json is invalid JSON! Restoring from backup..."
+  # The backup from Step 2 should still exist
+  exit 1
+fi
+
+# Verify teams env var is present
+if jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$SETTINGS_FILE" > /dev/null 2>&1; then
+  echo "Agent teams: ENABLED"
+else
+  echo "WARNING: Agent teams env var not found in settings.json"
+fi
+
+# Show final settings.json for user review
+echo ""
+echo "Final settings.json:"
+jq '.' "$SETTINGS_FILE"
+```
+
+### If User Chooses NO:
+
+Skip this step. Agent teams will remain disabled. User can enable later by adding to `~/.claude/settings.json`:
+```json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+```
+
+Or by running `/oh-my-claudecode:omc-setup --force` and choosing to enable teams.
+
+### Save Progress
+
+```bash
+# Save progress - Step 5.5 complete (Teams configured)
+mkdir -p .omc/state
+CONFIG_TYPE=$(cat ".omc/state/setup-state.json" 2>/dev/null | grep -oE '"configType":\s*"[^"]+"' | cut -d'"' -f4 || echo "unknown")
+cat > ".omc/state/setup-state.json" << EOF
+{
+  "lastCompletedStep": 5.5,
+  "timestamp": "$(date -Iseconds)",
+  "configType": "$CONFIG_TYPE"
+}
+EOF
+```
+
 ## Step 6: Detect Upgrade from 2.x
 
 Check if user has existing configuration:
@@ -745,10 +914,16 @@ Just include these words naturally in your request:
 | ralph | Persistence mode | "ralph: fix the auth bug" |
 | ralplan | Iterative planning | "ralplan this feature" |
 | ulw | Max parallelism | "ulw refactor the API" |
-| eco | Token-efficient mode | "eco refactor the API" |
 | plan | Planning interview | "plan the new endpoints" |
+| team | Coordinated agents | "/team 3:executor fix errors" |
 
 **ralph includes ultrawork:** When you activate ralph mode, it automatically includes ultrawork's parallel execution. No need to combine keywords.
+
+TEAMS:
+Spawn coordinated agents with shared task lists and real-time messaging:
+- /oh-my-claudecode:team 3:executor "fix all TypeScript errors"
+- /oh-my-claudecode:team 5:build-fixer "fix build errors in src/"
+Teams use Claude Code native tools (TeamCreate/SendMessage/TaskCreate).
 
 MCP SERVERS:
 Run /oh-my-claudecode:mcp-setup to add tools like web search, GitHub, etc.
@@ -786,8 +961,13 @@ MAGIC KEYWORDS (power-user shortcuts):
 | ralph | /ralph | "ralph: fix the bug" |
 | ralplan | /ralplan | "ralplan this feature" |
 | ulw | /ultrawork | "ulw refactor API" |
-| eco | (new!) | "eco fix all errors" |
 | plan | /plan | "plan the endpoints" |
+| team | (new!) | "/team 3:executor fix errors" |
+
+TEAMS (NEW!):
+Spawn coordinated agents with shared task lists and real-time messaging:
+- /oh-my-claudecode:team 3:executor "fix all TypeScript errors"
+- Uses Claude Code native tools (TeamCreate/SendMessage/TaskCreate)
 
 HUD STATUSLINE:
 The status bar now shows OMC state. Restart Claude Code to see it.
@@ -810,6 +990,18 @@ gh auth status &>/dev/null
 ```
 
 ### If gh is available and authenticated:
+
+**Before prompting, check if the repository is already starred:**
+
+```bash
+gh api user/starred/Yeachan-Heo/oh-my-claudecode &>/dev/null
+```
+
+**If already starred (exit code 0):**
+- Skip the prompt entirely
+- Continue to next step silently
+
+**If NOT starred (exit code non-zero):**
 
 Use the AskUserQuestion tool to prompt the user:
 
@@ -905,6 +1097,7 @@ MODES:
     - Sets up HUD statusline
     - Checks for updates
     - Offers MCP server configuration
+    - Configures team mode defaults (agent count, type, model)
     - If already configured, offers quick update option
 
   Local Configuration (--local)
@@ -933,3 +1126,24 @@ EXAMPLES:
 
 For more info: https://github.com/Yeachan-Heo/oh-my-claudecode
 ```
+
+## Optional Rule Templates
+
+OMC includes rule templates you can copy to your project's `.claude/rules/` directory for automatic context injection:
+
+| Template | Purpose |
+|----------|---------|
+| `coding-style.md` | Code style, immutability, file organization |
+| `testing.md` | TDD workflow, 80% coverage target |
+| `security.md` | Secret management, input validation |
+| `performance.md` | Model selection, context management |
+| `git-workflow.md` | Commit conventions, PR workflow |
+| `karpathy-guidelines.md` | Coding discipline — think before coding, simplicity, surgical changes |
+
+Copy with:
+```bash
+mkdir -p .claude/rules
+cp "${CLAUDE_PLUGIN_ROOT}/templates/rules/"*.md .claude/rules/
+```
+
+See `templates/rules/README.md` for details.

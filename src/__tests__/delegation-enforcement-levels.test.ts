@@ -565,7 +565,7 @@ describe('delegation-enforcement-levels', () => {
         expect.stringContaining('task-'),
         'Test task',
         'executor',
-        '/tmp/test-project'
+        process.cwd()
       );
     });
   });
@@ -596,6 +596,50 @@ describe('delegation-enforcement-levels', () => {
 
     it('returns true for empty/falsy path', () => {
       expect(isAllowedPath('')).toBe(true);
+    });
+
+    // Traversal bypass prevention
+    it('rejects .omc/../src/file.ts traversal', () => {
+      expect(isAllowedPath('.omc/../src/file.ts')).toBe(false);
+    });
+
+    it('rejects .claude/../src/file.ts traversal', () => {
+      expect(isAllowedPath('.claude/../src/file.ts')).toBe(false);
+    });
+
+    it('rejects bare .. traversal', () => {
+      expect(isAllowedPath('../secret.ts')).toBe(false);
+    });
+
+    // Windows backslash paths
+    it('handles Windows-style .omc paths', () => {
+      expect(isAllowedPath('.omc\\plans\\test.md')).toBe(true);
+    });
+
+    it('rejects Windows traversal .omc\\..\\src\\file.ts', () => {
+      expect(isAllowedPath('.omc\\..\\src\\file.ts')).toBe(false);
+    });
+
+    // Nested .omc in non-root position (should be rejected for relative paths)
+    it('rejects foo/.omc/bar.ts as relative path', () => {
+      expect(isAllowedPath('foo/.omc/bar.ts')).toBe(false);
+    });
+
+    // Windows mixed-separator edge cases
+    it('rejects mixed separator traversal .omc\\..\\..\\secret', () => {
+      expect(isAllowedPath('.omc\\..\\..\\secret')).toBe(false);
+    });
+
+    it('rejects double-dot with mixed separators .omc/..\\src', () => {
+      expect(isAllowedPath('.omc/..\\src')).toBe(false);
+    });
+
+    it('rejects UNC paths as not relative to project', () => {
+      expect(isAllowedPath('\\\\server\\share\\.omc\\file')).toBe(false);
+    });
+
+    it('rejects absolute Windows drive paths without worktree root', () => {
+      expect(isAllowedPath('C:\\repo\\.omc\\file')).toBe(false);
     });
   });
 

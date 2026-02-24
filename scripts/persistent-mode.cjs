@@ -5,7 +5,7 @@
  * Minimal continuation enforcer for all OMC modes.
  * Stripped down for reliability — no optional imports, no PRD, no notepad pruning.
  *
- * Supported modes: ralph, autopilot, ultrapilot, swarm, ultrawork, ecomode, ultraqa, pipeline
+ * Supported modes: ralph, autopilot, ultrapilot, swarm, ultrawork, ultraqa, pipeline
  */
 
 const {
@@ -18,12 +18,18 @@ const {
 const { join, dirname, resolve, normalize } = require("path");
 const { homedir } = require("os");
 
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString("utf-8");
+async function readStdin(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) { settled = true; process.stdin.removeAllListeners(); process.stdin.destroy(); resolve(Buffer.concat(chunks).toString("utf-8")); }
+    }, timeoutMs);
+    process.stdin.on("data", (chunk) => { chunks.push(chunk); });
+    process.stdin.on("end", () => { if (!settled) { settled = true; clearTimeout(timeout); resolve(Buffer.concat(chunks).toString("utf-8")); } });
+    process.stdin.on("error", () => { if (!settled) { settled = true; clearTimeout(timeout); resolve(""); } });
+    if (process.stdin.readableEnded) { if (!settled) { settled = true; clearTimeout(timeout); resolve(Buffer.concat(chunks).toString("utf-8")); } }
+  });
 }
 
 function readJsonFile(path) {
@@ -46,6 +52,74 @@ function writeJsonFile(path, data) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Read the session-idle notification cooldown in seconds from ~/.omc/config.json.
+ * Default: 60. 0 = disabled.
+ */
+function getIdleCooldownSeconds() {
+  const configPath = join(homedir(), '.omc', 'config.json');
+  const config = readJsonFile(configPath);
+  const val = config?.notificationCooldown?.sessionIdleSeconds;
+  if (typeof val === 'number') return val;
+  return 60;
+}
+
+/**
+ * Check whether the session-idle cooldown has elapsed.
+ * Returns true if the notification should be sent.
+ */
+function shouldSendIdleNotification(stateDir) {
+  const cooldownSecs = getIdleCooldownSeconds();
+  if (cooldownSecs === 0) return true; // cooldown disabled
+
+  const cooldownPath = join(stateDir, 'idle-notif-cooldown.json');
+  const data = readJsonFile(cooldownPath);
+  if (data?.lastSentAt) {
+    const elapsed = (Date.now() - new Date(data.lastSentAt).getTime()) / 1000;
+    if (Number.isFinite(elapsed) && elapsed < cooldownSecs) return false;
+  }
+  return true;
+}
+
+/**
+ * Record that the session-idle notification was sent.
+ */
+function recordIdleNotificationSent(stateDir) {
+  const cooldownPath = join(stateDir, 'idle-notif-cooldown.json');
+  writeJsonFile(cooldownPath, { lastSentAt: new Date().toISOString() });
+}
+
+/**
+ * Send stop notification (fire-and-forget, non-blocking).
+ * Only notifies on first stop to avoid spam.
+ */
+async function sendStopNotification(modeName, stateData, sessionId, directory) {
+  // Only notify once per mode activation
+  if (stateData._stopNotified) return;
+
+  try {
+    const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    if (!pluginRoot) return;
+
+    const { pathToFileURL } = require('url');
+    const { notify } = await import(pathToFileURL(join(pluginRoot, 'dist', 'notifications', 'index.js')).href);
+
+    await notify('session-stop', {
+      sessionId: sessionId,
+      projectPath: directory,
+      activeMode: modeName,
+      iteration: stateData.iteration || stateData.reinforcement_count || 1,
+      maxIterations: stateData.max_iterations || stateData.max_reinforcements || 100,
+      incompleteTasks: undefined, // Caller can override
+    }).catch(() => {});
+
+    // Mark as notified to prevent duplicate notifications
+    stateData._stopNotified = true;
+  } catch {
+    // Notification module not available, skip silently
   }
 }
 
@@ -91,6 +165,21 @@ function normalizePath(p) {
 }
 
 /**
+ * Check if a state belongs to the requesting session.
+ * When sessionId is known: require exact match with state.session_id.
+ * When sessionId is empty/unknown: only match state without session_id (legacy compat).
+ */
+function isSessionMatch(state, sessionId) {
+  if (!state) return false;
+  if (sessionId) {
+    // Session is known: require exact match
+    return state.session_id === sessionId;
+  }
+  // No session_id from hook: only match legacy state (no session_id in state)
+  return !state.session_id;
+}
+
+/**
  * Check if a state belongs to the current project.
  */
 function isStateForCurrentProject(
@@ -120,13 +209,33 @@ function readStateFile(stateDir, filename) {
 }
 
 /**
+ * Read state file with session-scoped path support and fallback to legacy path.
+ */
+function readStateFileWithSession(stateDir, filename, sessionId) {
+  // Try session-scoped path first (and ONLY) when sessionId is available
+  if (sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)) {
+    const sessionsDir = join(stateDir, 'sessions', sessionId);
+    const sessionPath = join(sessionsDir, filename);
+    const state = readJsonFile(sessionPath);
+    if (state) {
+      return { state, path: sessionPath, isGlobal: false };
+    }
+    // Session path not found — do NOT fall back to legacy
+    return { state: null, path: null, isGlobal: false };
+  }
+  // No sessionId: fall back to legacy path (backward compat)
+  return readStateFile(stateDir, filename);
+}
+
+/**
  * Count incomplete Tasks from Claude Code's native Task system.
  */
 function countIncompleteTasks(sessionId) {
   if (!sessionId || typeof sessionId !== "string") return 0;
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)) return 0;
 
-  const taskDir = join(homedir(), ".claude", "tasks", sessionId);
+  const cfgDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  const taskDir = join(cfgDir, "tasks", sessionId);
   if (!existsSync(taskDir)) return 0;
 
   let count = 0;
@@ -272,32 +381,31 @@ async function main() {
       data = JSON.parse(input);
     } catch {}
 
-    const directory = data.directory || process.cwd();
-    const sessionId = data.sessionId || data.session_id || "";
+    const directory = data.cwd || data.directory || process.cwd();
+    const sessionId = data.session_id || data.sessionId || "";
     const stateDir = join(directory, ".omc", "state");
 
     // CRITICAL: Never block context-limit stops.
     // Blocking these causes a deadlock where Claude Code cannot compact.
     // See: https://github.com/Yeachan-Heo/oh-my-claudecode/issues/213
     if (isContextLimitStop(data)) {
-      console.log(JSON.stringify({ continue: true }));
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
 
     // Respect user abort (Ctrl+C, cancel)
     if (isUserAbort(data)) {
-      console.log(JSON.stringify({ continue: true }));
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
 
-    // Read all mode states (local-only)
-    const ralph = readStateFile(stateDir, "ralph-state.json");
-    const autopilot = readStateFile(stateDir, "autopilot-state.json");
-    const ultrapilot = readStateFile(stateDir, "ultrapilot-state.json");
-    const ultrawork = readStateFile(stateDir, "ultrawork-state.json");
-    const ecomode = readStateFile(stateDir, "ecomode-state.json");
-    const ultraqa = readStateFile(stateDir, "ultraqa-state.json");
-    const pipeline = readStateFile(stateDir, "pipeline-state.json");
+    // Read all mode states (session-scoped with legacy fallback)
+    const ralph = readStateFileWithSession(stateDir, "ralph-state.json", sessionId);
+    const autopilot = readStateFileWithSession(stateDir, "autopilot-state.json", sessionId);
+    const ultrapilot = readStateFileWithSession(stateDir, "ultrapilot-state.json", sessionId);
+    const ultrawork = readStateFileWithSession(stateDir, "ultrawork-state.json", sessionId);
+    const ultraqa = readStateFileWithSession(stateDir, "ultraqa-state.json", sessionId);
+    const pipeline = readStateFileWithSession(stateDir, "pipeline-state.json", sessionId);
 
     // Swarm uses swarm-summary.json (not swarm-state.json) + marker file
     const swarmMarker = existsSync(join(stateDir, "swarm-active.marker"));
@@ -310,7 +418,7 @@ async function main() {
 
     // Priority 1: Ralph Loop (explicit persistence mode)
     // Skip if state is stale (older than 2 hours) - prevents blocking new sessions
-    if (ralph.state?.active && !isStaleState(ralph.state)) {
+    if (ralph.state?.active && !isStaleState(ralph.state) && isSessionMatch(ralph.state, sessionId)) {
       const iteration = ralph.state.iteration || 1;
       const maxIter = ralph.state.max_iterations || 100;
 
@@ -318,6 +426,9 @@ async function main() {
         ralph.state.iteration = iteration + 1;
         ralph.state.last_checked_at = new Date().toISOString();
         writeJsonFile(ralph.path, ralph.state);
+
+        // Fire-and-forget notification
+        sendStopNotification('ralph', ralph.state, sessionId, directory).catch(() => {});
 
         console.log(
           JSON.stringify({
@@ -330,7 +441,7 @@ async function main() {
     }
 
     // Priority 2: Autopilot (high-level orchestration)
-    if (autopilot.state?.active && !isStaleState(autopilot.state)) {
+    if (autopilot.state?.active && !isStaleState(autopilot.state) && isSessionMatch(autopilot.state, sessionId)) {
       const phase = autopilot.state.phase || "unknown";
       if (phase !== "complete") {
         const newCount = (autopilot.state.reinforcement_count || 0) + 1;
@@ -338,6 +449,9 @@ async function main() {
           autopilot.state.reinforcement_count = newCount;
           autopilot.state.last_checked_at = new Date().toISOString();
           writeJsonFile(autopilot.path, autopilot.state);
+
+          // Fire-and-forget notification
+          sendStopNotification('autopilot', autopilot.state, sessionId, directory).catch(() => {});
 
           console.log(
             JSON.stringify({
@@ -351,7 +465,7 @@ async function main() {
     }
 
     // Priority 3: Ultrapilot (parallel autopilot)
-    if (ultrapilot.state?.active && !isStaleState(ultrapilot.state)) {
+    if (ultrapilot.state?.active && !isStaleState(ultrapilot.state) && isSessionMatch(ultrapilot.state, sessionId)) {
       const workers = ultrapilot.state.workers || [];
       const incomplete = workers.filter(
         (w) => w.status !== "complete" && w.status !== "failed",
@@ -362,6 +476,9 @@ async function main() {
           ultrapilot.state.reinforcement_count = newCount;
           ultrapilot.state.last_checked_at = new Date().toISOString();
           writeJsonFile(ultrapilot.path, ultrapilot.state);
+
+          // Fire-and-forget notification
+          sendStopNotification('ultrapilot', ultrapilot.state, sessionId, directory).catch(() => {});
 
           console.log(
             JSON.stringify({
@@ -385,6 +502,9 @@ async function main() {
           swarmSummary.last_checked_at = new Date().toISOString();
           writeJsonFile(join(stateDir, "swarm-summary.json"), swarmSummary);
 
+          // Fire-and-forget notification
+          sendStopNotification('swarm', swarmSummary, sessionId, directory).catch(() => {});
+
           console.log(
             JSON.stringify({
               decision: "block",
@@ -397,7 +517,7 @@ async function main() {
     }
 
     // Priority 5: Pipeline (sequential stages)
-    if (pipeline.state?.active && !isStaleState(pipeline.state)) {
+    if (pipeline.state?.active && !isStaleState(pipeline.state) && isSessionMatch(pipeline.state, sessionId)) {
       const currentStage = pipeline.state.current_stage || 0;
       const totalStages = pipeline.state.stages?.length || 0;
       if (currentStage < totalStages) {
@@ -406,6 +526,9 @@ async function main() {
           pipeline.state.reinforcement_count = newCount;
           pipeline.state.last_checked_at = new Date().toISOString();
           writeJsonFile(pipeline.path, pipeline.state);
+
+          // Fire-and-forget notification
+          sendStopNotification('pipeline', pipeline.state, sessionId, directory).catch(() => {});
 
           console.log(
             JSON.stringify({
@@ -419,13 +542,16 @@ async function main() {
     }
 
     // Priority 6: UltraQA (QA cycling)
-    if (ultraqa.state?.active && !isStaleState(ultraqa.state)) {
+    if (ultraqa.state?.active && !isStaleState(ultraqa.state) && isSessionMatch(ultraqa.state, sessionId)) {
       const cycle = ultraqa.state.cycle || 1;
       const maxCycles = ultraqa.state.max_cycles || 10;
       if (cycle < maxCycles && !ultraqa.state.all_passing) {
         ultraqa.state.cycle = cycle + 1;
         ultraqa.state.last_checked_at = new Date().toISOString();
         writeJsonFile(ultraqa.path, ultraqa.state);
+
+        // Fire-and-forget notification
+        sendStopNotification('ultraqa', ultraqa.state, sessionId, directory).catch(() => {});
 
         console.log(
           JSON.stringify({
@@ -440,13 +566,11 @@ async function main() {
     // Priority 7: Ultrawork - ALWAYS continue while active (not just when tasks exist)
     // This prevents false stops from bash errors, transient failures, etc.
     // Session isolation: only block if state belongs to this session (issue #311)
-    // If state has session_id, it must match. If no session_id (legacy), allow.
     // Project isolation: only block if state belongs to this project
     if (
       ultrawork.state?.active &&
       !isStaleState(ultrawork.state) &&
-      (!ultrawork.state.session_id ||
-        ultrawork.state.session_id === sessionId) &&
+      isSessionMatch(ultrawork.state, sessionId) &&
       isStateForCurrentProject(ultrawork.state, directory, ultrawork.isGlobal)
     ) {
       const newCount = (ultrawork.state.reinforcement_count || 0) + 1;
@@ -454,13 +578,16 @@ async function main() {
 
       if (newCount > maxReinforcements) {
         // Max reinforcements reached - allow stop
-        console.log(JSON.stringify({ continue: true }));
+        console.log(JSON.stringify({ continue: true, suppressOutput: true }));
         return;
       }
 
       ultrawork.state.reinforcement_count = newCount;
       ultrawork.state.last_checked_at = new Date().toISOString();
       writeJsonFile(ultrawork.path, ultrawork.state);
+
+      // Fire-and-forget notification
+      sendStopNotification('ultrawork', ultrawork.state, sessionId, directory).catch(() => {});
 
       let reason = `[ULTRAWORK #${newCount}/${maxReinforcements}] Mode active.`;
 
@@ -483,44 +610,34 @@ async function main() {
       return;
     }
 
-    // Priority 8: Ecomode - ALWAYS continue while active
-    if (ecomode.state?.active && !isStaleState(ecomode.state)) {
-      const newCount = (ecomode.state.reinforcement_count || 0) + 1;
-      const maxReinforcements = ecomode.state.max_reinforcements || 50;
-
-      if (newCount > maxReinforcements) {
-        // Max reinforcements reached - allow stop
-        console.log(JSON.stringify({ continue: true }));
-        return;
+    // No blocking needed — Claude is truly idle.
+    // Send session-idle notification (fire-and-forget) so external integrations
+    // (Telegram, Discord) know the session went idle without any active mode.
+    // Per-session cooldown prevents notification spam when the session idles repeatedly.
+    if (sessionId && shouldSendIdleNotification(stateDir)) {
+      try {
+        const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+        if (pluginRoot) {
+          const { pathToFileURL } = require('url');
+          import(pathToFileURL(join(pluginRoot, 'dist', 'notifications', 'index.js')).href)
+            .then(({ notify }) =>
+              notify('session-idle', {
+                sessionId,
+                projectPath: directory,
+              }).catch(() => {})
+            )
+            .catch(() => {});
+          recordIdleNotificationSent(stateDir);
+        }
+      } catch {
+        // Notification module not available, skip silently
       }
-
-      ecomode.state.reinforcement_count = newCount;
-      ecomode.state.last_checked_at = new Date().toISOString();
-      writeJsonFile(ecomode.path, ecomode.state);
-
-      let reason = `[ECOMODE #${newCount}/${maxReinforcements}] Mode active.`;
-
-      if (totalIncomplete > 0) {
-        const itemType = taskCount > 0 ? "Tasks" : "todos";
-        reason += ` ${totalIncomplete} incomplete ${itemType} remain. Continue working.`;
-      } else if (newCount >= 3) {
-        // Only suggest cancel after minimum iterations (guard against no-tasks-created scenario)
-        reason += ` If all work is complete, run /oh-my-claudecode:cancel to cleanly exit ecomode and clean up state files. If cancel fails, retry with /oh-my-claudecode:cancel --force. Otherwise, continue working.`;
-      } else {
-        // Early iterations with no tasks yet - just tell LLM to continue
-        reason += ` Continue working - create Tasks to track your progress.`;
-      }
-
-      console.log(JSON.stringify({ decision: "block", reason }));
-      return;
     }
-
-    // No blocking needed
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
   } catch (error) {
     // On any error, allow stop rather than blocking forever
     console.error(`[persistent-mode] Error: ${error.message}`);
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
   }
 }
 

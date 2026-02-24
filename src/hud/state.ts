@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { getClaudeConfigDir } from '../utils/paths.js';
 import type { OmcHudState, BackgroundTask, HudConfig } from './types.js';
 import { DEFAULT_HUD_CONFIG, PRESET_CONFIGS } from './types.js';
 import { cleanupStaleBackgroundTasks, markOrphanedTasksAsStale } from './background-cleanup.js';
@@ -30,14 +30,14 @@ function getLocalStateFilePath(directory?: string): string {
  * Get Claude Code settings.json path
  */
 function getSettingsFilePath(): string {
-  return join(homedir(), '.claude', 'settings.json');
+  return join(getClaudeConfigDir(), 'settings.json');
 }
 
 /**
  * Get the HUD config file path (legacy)
  */
 function getConfigFilePath(): string {
-  return join(homedir(), '.claude', '.omc', 'hud-config.json');
+  return join(getClaudeConfigDir(), '.omc', 'hud-config.json');
 }
 
 /**
@@ -182,17 +182,26 @@ export function readHudConfig(): HudConfig {
  * Merge partial config with defaults
  */
 function mergeWithDefaults(config: Partial<HudConfig>): HudConfig {
+  const preset = config.preset ?? DEFAULT_HUD_CONFIG.preset;
+  const presetElements = PRESET_CONFIGS[preset] ?? {};
+
   return {
-    preset: config.preset ?? DEFAULT_HUD_CONFIG.preset,
+    preset,
     elements: {
-      ...DEFAULT_HUD_CONFIG.elements,
-      ...config.elements,
+      ...DEFAULT_HUD_CONFIG.elements,  // Base defaults
+      ...presetElements,                // Preset overrides
+      ...config.elements,               // User overrides
     },
     thresholds: {
       ...DEFAULT_HUD_CONFIG.thresholds,
       ...config.thresholds,
     },
     staleTaskThresholdMinutes: config.staleTaskThresholdMinutes ?? DEFAULT_HUD_CONFIG.staleTaskThresholdMinutes,
+    contextLimitWarning: {
+      ...DEFAULT_HUD_CONFIG.contextLimitWarning,
+      ...config.contextLimitWarning,
+    },
+    ...(config.rateLimitsProvider ? { rateLimitsProvider: config.rateLimitsProvider } : {}),
   };
 }
 

@@ -1,40 +1,46 @@
 ---
 name: ralplan
-description: Iterative planning with Planner, Architect, and Critic until consensus
+description: Alias for /plan --consensus
 ---
 
-# Ralplan Command
+# Ralplan (Consensus Planning Alias)
 
-**This is an alias for `/plan --consensus`**
-
-Ralplan orchestrates three specialized agents—Planner, Architect, and Critic—in an iterative loop until consensus is reached on a comprehensive work plan.
+Ralplan is a shorthand alias for `/oh-my-claudecode:plan --consensus`. It triggers iterative planning with Planner, Architect, and Critic agents until consensus is reached.
 
 ## Usage
 
 ```
-/oh-my-claudecode:ralplan [task]
+/oh-my-claudecode:ralplan "task description"
 ```
 
-## What It Does
+## Flags
 
-Invokes the plan skill with --consensus mode, which:
-1. Creates initial plan with Planner agent
-2. Consults Architect for architectural questions
-3. Reviews with Critic agent
-4. Iterates until Critic approves (max 5 iterations)
+- `--interactive`: Enables user prompts at key decision points (draft review in step 2 and final approval in step 6). Without this flag the workflow runs fully automated — Planner → Architect → Critic loop — and outputs the final plan without asking for confirmation.
 
-## Implementation
-
-When this skill is invoked, immediately invoke the plan skill with consensus mode:
+## Usage with interactive mode
 
 ```
-Invoke Skill: plan --consensus {{ARGUMENTS}}
+/oh-my-claudecode:ralplan --interactive "task description"
 ```
 
-Pass all arguments to the plan skill. The plan skill handles all consensus logic, state management, and iteration.
+## Behavior
 
-## See Also
+This skill invokes the Plan skill in consensus mode:
 
-- `/plan` - Base planning skill with all modes
-- `/plan --consensus` - Direct invocation of consensus mode
-- `/cancel` - Cancel active planning session
+```
+/oh-my-claudecode:plan --consensus <arguments>
+```
+
+The consensus workflow:
+1. **Planner** creates initial plan
+2. **User feedback** *(--interactive only)*: If `--interactive` is set, use `AskUserQuestion` to present the draft plan before review (Proceed to review / Request changes / Skip review). Otherwise, automatically proceed to review.
+3. **Architect** reviews for architectural soundness — **await completion before step 4**
+4. **Critic** evaluates against quality criteria — run only after step 3 completes
+5. If Critic rejects: iterate with feedback (max 5 iterations)
+6. On Critic approval *(--interactive only)*: If `--interactive` is set, use `AskUserQuestion` to present the plan with approval options (Approve and execute via ralph / Approve and implement via team / Clear context and implement / Request changes / Reject). Otherwise, output the final plan and stop.
+7. *(--interactive only)* User chooses: Approve (ralph or team), Request changes, or Reject
+8. *(--interactive only)* On approval: invoke `Skill("oh-my-claudecode:ralph")` for sequential execution or `Skill("oh-my-claudecode:team")` for parallel team execution -- never implement directly
+
+> **Important:** Steps 3 and 4 MUST run sequentially. Do NOT issue both agent Task calls in the same parallel batch. Always await the Architect result before issuing the Critic Task.
+
+Follow the Plan skill's full documentation for consensus mode details.
