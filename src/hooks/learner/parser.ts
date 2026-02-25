@@ -36,14 +36,25 @@ export function parseSkillFile(rawContent: string): SkillParseResult {
   try {
     const metadata = parseYamlMetadata(yamlContent);
 
-    // Validate required fields
-    if (!metadata.id) errors.push('Missing required field: id');
+    // Derive id from name if missing
+    if (!metadata.id && metadata.name) {
+      metadata.id = metadata.name
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '');
+    }
+
+    // Default source to 'manual' if missing
+    if (!metadata.source) {
+      metadata.source = 'manual';
+    }
+
+    // Validate required fields (only truly required ones)
     if (!metadata.name) errors.push('Missing required field: name');
     if (!metadata.description) errors.push('Missing required field: description');
     if (!metadata.triggers || metadata.triggers.length === 0) {
       errors.push('Missing required field: triggers');
     }
-    if (!metadata.source) errors.push('Missing required field: source');
 
     return {
       metadata,
@@ -141,7 +152,9 @@ function parseArrayValue(
 ): { value: string | string[]; consumed: number } {
   // Inline array: ["a", "b"]
   if (rawValue.startsWith('[')) {
-    const content = rawValue.slice(1, rawValue.lastIndexOf(']')).trim();
+    const endIdx = rawValue.lastIndexOf(']');
+    if (endIdx === -1) return { value: [], consumed: 1 };
+    const content = rawValue.slice(1, endIdx).trim();
     if (!content) return { value: [], consumed: 1 };
 
     const items = content.split(',').map(s => parseStringValue(s.trim())).filter(Boolean);

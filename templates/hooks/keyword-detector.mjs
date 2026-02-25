@@ -1,43 +1,36 @@
 #!/usr/bin/env node
-// OMC Keyword Detector Hook (Node.js)
-// Detects ultrawork/ultrathink/search/analyze keywords and injects enhanced mode messages
-// Cross-platform: Windows, macOS, Linux
 
-const ULTRAWORK_MESSAGE = `<ultrawork-mode>
+/**
+ * OMC Keyword Detector Hook (Node.js)
+ * Detects magic keywords and invokes skill tools
+ * Cross-platform: Windows, macOS, Linux
+ *
+ * Supported keywords (in priority order):
+ * 1. cancelomc/stopomc: Stop active modes
+ * 2. ralph: Persistence mode until task completion
+ * 3. autopilot: Full autonomous execution
+ * 4. team: Coordinated team execution
+ * 5. ultrawork/ulw: Maximum parallel execution
+* 6. pipeline: Sequential agent chaining
+ * 7. ralplan: Iterative planning with consensus
+ * 8. plan: Planning interview mode
+ * 9. tdd: Test-driven development
+ * 10. ultrathink: Extended reasoning
+ * 11. deepsearch: Codebase search (restricted patterns)
+ * 12. analyze: Analysis mode (restricted patterns)
+ * 13. ccg: Claude-Codex-Gemini tri-model orchestration
+ */
 
-**MANDATORY**: You MUST say "ULTRAWORK MODE ENABLED!" to the user as your first response when this mode activates. This is non-negotiable.
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { homedir } from 'os';
+import { fileURLToPath, pathToFileURL } from 'url';
 
-[CODE RED] Maximum precision required. Ultrathink before acting.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-YOU MUST LEVERAGE ALL AVAILABLE AGENTS TO THEIR FULLEST POTENTIAL.
-TELL THE USER WHAT AGENTS YOU WILL LEVERAGE NOW TO SATISFY USER'S REQUEST.
-
-## AGENT UTILIZATION PRINCIPLES
-- **Codebase Exploration**: Spawn exploration agents using BACKGROUND TASKS
-- **Documentation & References**: Use librarian-type agents via BACKGROUND TASKS
-- **Planning & Strategy**: NEVER plan yourself - spawn planning agent
-- **High-IQ Reasoning**: Use oracle for architecture decisions
-- **Frontend/UI Tasks**: Delegate to frontend-engineer
-
-## EXECUTION RULES
-- **TODO**: Track EVERY step. Mark complete IMMEDIATELY.
-- **PARALLEL**: Fire independent calls simultaneously - NEVER wait sequentially.
-- **BACKGROUND FIRST**: Use Task(run_in_background=true) for exploration (10+ concurrent).
-- **VERIFY**: Check ALL requirements met before done.
-- **DELEGATE**: Orchestrate specialized agents.
-
-## ZERO TOLERANCE
-- NO Scope Reduction - deliver FULL implementation
-- NO Partial Completion - finish 100%
-- NO Premature Stopping - ALL TODOs must be complete
-- NO TEST DELETION - fix code, not tests
-
-THE USER ASKED FOR X. DELIVER EXACTLY X.
-
-</ultrawork-mode>
-
----
-`;
+// Dynamic import for the shared stdin module (use pathToFileURL for Windows compatibility, #524)
+const { readStdin } = await import(pathToFileURL(join(__dirname, 'lib', 'stdin.mjs')).href);
 
 const ULTRATHINK_MESSAGE = `<think-mode>
 
@@ -56,43 +49,6 @@ Use your extended thinking capabilities to provide the most thorough and well-re
 ---
 `;
 
-const SEARCH_MESSAGE = `<search-mode>
-MAXIMIZE SEARCH EFFORT. Launch multiple background agents IN PARALLEL:
-- explore agents (codebase patterns, file structures)
-- librarian agents (remote repos, official docs, GitHub examples)
-Plus direct tools: Grep, Glob
-NEVER stop at first result - be exhaustive.
-</search-mode>
-
----
-`;
-
-const ANALYZE_MESSAGE = `<analyze-mode>
-ANALYSIS MODE. Gather context before diving deep:
-
-CONTEXT GATHERING (parallel):
-- 1-2 explore agents (codebase patterns, implementations)
-- 1-2 librarian agents (if external library involved)
-- Direct tools: Grep, Glob, LSP for targeted searches
-
-IF COMPLEX (architecture, multi-system, debugging after 2+ failures):
-- Consult oracle agent for strategic guidance
-
-SYNTHESIZE findings before proceeding.
-</analyze-mode>
-
----
-`;
-
-// Read all stdin
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf-8');
-}
-
 // Extract prompt from various JSON structures
 function extractPrompt(input) {
   try {
@@ -107,38 +63,228 @@ function extractPrompt(input) {
     }
     return '';
   } catch {
-    // Fallback: try to extract with regex
-    const match = input.match(/"(?:prompt|content|text)"\s*:\s*"([^"]+)"/);
-    return match ? match[1] : '';
+    // Fail closed: don't risk false-positive keyword detection from malformed input
+    return '';
   }
 }
 
-// Remove code blocks to prevent false positives
-function removeCodeBlocks(text) {
+// Sanitize text to prevent false positives from code blocks, XML tags, URLs, and file paths
+function sanitizeForKeywordDetection(text) {
   return text
+    // 1. Strip XML-style tag blocks: <tag-name ...>...</tag-name> (multi-line, greedy on tag name)
+    .replace(/<(\w[\w-]*)[\s>][\s\S]*?<\/\1>/g, '')
+    // 2. Strip self-closing XML tags: <tag-name />, <tag-name attr="val" />
+    .replace(/<\w[\w-]*(?:\s[^>]*)?\s*\/>/g, '')
+    // 3. Strip URLs: http://... or https://... up to whitespace
+    .replace(/https?:\/\/[^\s)>\]]+/g, '')
+    // 4. Strip file paths: /foo/bar/baz or foo/bar/baz — uses lookbehind (Node.js supports it)
+    // The TypeScript version (index.ts) uses capture group + $1 replacement for broader compat
+    .replace(/(?<=^|[\s"'`(])(?:\/)?(?:[\w.-]+\/)+[\w.-]+/gm, '')
+    // 5. Strip markdown code blocks (existing)
     .replace(/```[\s\S]*?```/g, '')
+    // 6. Strip inline code (existing)
     .replace(/`[^`]+`/g, '');
 }
 
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-
-// Create ultrawork state file
-function activateUltraworkState(directory, prompt) {
+// Create state file for a mode
+function activateState(directory, prompt, stateName, sessionId) {
   const state = {
     active: true,
     started_at: new Date().toISOString(),
     original_prompt: prompt,
+    session_id: sessionId || undefined,
     reinforcement_count: 0,
     last_checked_at: new Date().toISOString()
   };
-  const localDir = join(directory, '.omc');
-  if (!existsSync(localDir)) { try { mkdirSync(localDir, { recursive: true }); } catch {} }
-  try { writeFileSync(join(localDir, 'ultrawork-state.json'), JSON.stringify(state, null, 2)); } catch {}
-  const globalDir = join(homedir(), '.claude');
-  if (!existsSync(globalDir)) { try { mkdirSync(globalDir, { recursive: true }); } catch {} }
-  try { writeFileSync(join(globalDir, 'ultrawork-state.json'), JSON.stringify(state, null, 2)); } catch {}
+
+  // Write to local .omc/state directory
+  const localDir = join(directory, '.omc', 'state');
+  if (!existsSync(localDir)) {
+    try { mkdirSync(localDir, { recursive: true }); } catch {}
+  }
+  try { writeFileSync(join(localDir, `${stateName}-state.json`), JSON.stringify(state, null, 2)); } catch {}
+
+  // Write to global .omc/state directory
+  const globalDir = join(homedir(), '.omc', 'state');
+  if (!existsSync(globalDir)) {
+    try { mkdirSync(globalDir, { recursive: true }); } catch {}
+  }
+  try { writeFileSync(join(globalDir, `${stateName}-state.json`), JSON.stringify(state, null, 2)); } catch {}
+}
+
+/**
+ * Clear state files for cancel operation
+ */
+function clearStateFiles(directory, modeNames) {
+  for (const name of modeNames) {
+    const localPath = join(directory, '.omc', 'state', `${name}-state.json`);
+    const globalPath = join(homedir(), '.omc', 'state', `${name}-state.json`);
+    try { if (existsSync(localPath)) unlinkSync(localPath); } catch {}
+    try { if (existsSync(globalPath)) unlinkSync(globalPath); } catch {}
+  }
+}
+
+/**
+ * Link ralph and team state files for composition.
+ * Updates both state files to reference each other.
+ */
+function linkRalphTeam(directory, sessionId) {
+  const getStatePath = (modeName) => {
+    if (sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)) {
+      return join(directory, '.omc', 'state', 'sessions', sessionId, `${modeName}-state.json`);
+    }
+    return join(directory, '.omc', 'state', `${modeName}-state.json`);
+  };
+
+  // Update ralph state with linked_team
+  try {
+    const ralphPath = getStatePath('ralph');
+    if (existsSync(ralphPath)) {
+      const state = JSON.parse(readFileSync(ralphPath, 'utf-8'));
+      state.linked_team = true;
+      writeFileSync(ralphPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+    }
+  } catch { /* silent */ }
+
+  // Update team state with linked_ralph
+  try {
+    const teamPath = getStatePath('team');
+    if (existsSync(teamPath)) {
+      const state = JSON.parse(readFileSync(teamPath, 'utf-8'));
+      state.linked_ralph = true;
+      writeFileSync(teamPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+    }
+  } catch { /* silent */ }
+}
+
+/**
+ * Create a skill invocation message that tells Claude to use the Skill tool
+ */
+function createSkillInvocation(skillName, originalPrompt, args = '') {
+  const argsSection = args ? `\nArguments: ${args}` : '';
+  return `[MAGIC KEYWORD: ${skillName.toUpperCase()}]
+
+You MUST invoke the skill using the Skill tool:
+
+Skill: oh-my-claudecode:${skillName}${argsSection}
+
+User request:
+${originalPrompt}
+
+IMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`;
+}
+
+/**
+ * Create multi-skill invocation message for combined keywords
+ */
+function createMultiSkillInvocation(skills, originalPrompt) {
+  if (skills.length === 0) return '';
+  if (skills.length === 1) {
+    return createSkillInvocation(skills[0].name, originalPrompt, skills[0].args);
+  }
+
+  const skillBlocks = skills.map((s, i) => {
+    const argsSection = s.args ? `\nArguments: ${s.args}` : '';
+    return `### Skill ${i + 1}: ${s.name.toUpperCase()}
+Skill: oh-my-claudecode:${s.name}${argsSection}`;
+  }).join('\n\n');
+
+  return `[MAGIC KEYWORDS DETECTED: ${skills.map(s => s.name.toUpperCase()).join(', ')}]
+
+You MUST invoke ALL of the following skills using the Skill tool, in order:
+
+${skillBlocks}
+
+User request:
+${originalPrompt}
+
+IMPORTANT: Invoke ALL skills listed above. Start with the first skill IMMEDIATELY. After it completes, invoke the next skill in order. Do not skip any skill.`;
+}
+
+/**
+ * Create combined output for multiple skill matches
+ */
+function createCombinedOutput(skillMatches, originalPrompt) {
+  const parts = [];
+  if (skillMatches.length > 0) {
+    parts.push('## Section 1: Skill Invocations\n\n' + createMultiSkillInvocation(skillMatches, originalPrompt));
+  }
+  const allNames = skillMatches.map(m => m.name.toUpperCase());
+  return `[MAGIC KEYWORDS DETECTED: ${allNames.join(', ')}]\n\n${parts.join('\n\n---\n\n')}\n\nIMPORTANT: Complete ALL sections above in order.`;
+}
+
+/**
+ * Resolve conflicts between detected keywords
+ */
+function resolveConflicts(matches) {
+  const names = matches.map(m => m.name);
+
+  // Cancel is exclusive
+  if (names.includes('cancel')) {
+    return [matches.find(m => m.name === 'cancel')];
+  }
+
+  let resolved = [...matches];
+
+  // Team beats autopilot (legacy ultrapilot semantics)
+  if (names.includes('team') && names.includes('autopilot')) {
+    resolved = resolved.filter(m => m.name !== 'autopilot');
+  }
+
+  // Team beats ultrapilot (team is the canonical implementation)
+  if (names.includes('team') && names.includes('ultrapilot')) {
+    resolved = resolved.filter(m => m.name !== 'ultrapilot');
+  }
+
+  // Ralph + Team coexist (team-ralph linked mode)
+  // Both keywords are preserved so the skill can detect the composition.
+
+  // Sort by priority order
+const priorityOrder = ['cancel','ralph','autopilot','team','ultrawork',
+    'pipeline','ccg','ralplan','plan','tdd','research','ultrathink','deepsearch','analyze'];
+  resolved.sort((a, b) => priorityOrder.indexOf(a.name) - priorityOrder.indexOf(b.name));
+
+  return resolved;
+}
+
+/**
+ * Create proper hook output with additionalContext (Claude Code hooks API)
+ * The 'message' field is NOT a valid hook output - use hookSpecificOutput.additionalContext
+ */
+function createHookOutput(additionalContext) {
+  return {
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext
+    }
+  };
+}
+
+/**
+ * Check if the team feature is enabled in Claude Code settings.
+ * Reads ~/.claude/settings.json and checks for CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var.
+ * @returns {boolean} true if team feature is enabled
+ */
+function isTeamEnabled() {
+  try {
+    // Check settings.json first (authoritative, user-controlled)
+    const cfgDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+    const settingsPath = join(cfgDir, 'settings.json');
+    if (existsSync(settingsPath)) {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      if (settings.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1' ||
+          settings.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 'true') {
+        return true;
+      }
+    }
+    // Fallback: check env var (for dev/CI environments)
+    if (process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1' ||
+        process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 'true') {
+      return true;
+    }
+    return false;
+  } catch { return false; }
 }
 
 // Main
@@ -146,76 +292,162 @@ async function main() {
   try {
     const input = await readStdin();
     if (!input.trim()) {
-      console.log(JSON.stringify({ continue: true }));
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
 
     let data = {};
     try { data = JSON.parse(input); } catch {}
-    const directory = data.directory || process.cwd();
+    const directory = data.cwd || data.directory || process.cwd();
 
     const prompt = extractPrompt(input);
     if (!prompt) {
-      console.log(JSON.stringify({ continue: true }));
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
 
-    const cleanPrompt = removeCodeBlocks(prompt).toLowerCase();
+    const cleanPrompt = sanitizeForKeywordDetection(prompt).toLowerCase();
 
-    // Check for ultrawork keywords (highest priority)
-    if (/\b(ultrawork|ulw|uw)\b/.test(cleanPrompt)) {
-      activateUltraworkState(directory, prompt);
-      console.log(JSON.stringify({
-        continue: true,
-        hookSpecificOutput: {
-          hookEventName: 'UserPromptSubmit',
-          additionalContext: ULTRAWORK_MESSAGE
-        }
-      }));
+    // Collect all matching keywords
+    const matches = [];
+
+    // Cancel keywords
+    if (/\b(cancelomc|stopomc)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'cancel', args: '' });
+    }
+
+    // Ralph keywords
+    if (/\b(ralph)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'ralph', args: '' });
+    }
+
+    // Autopilot keywords
+    if (/\b(autopilot|auto[\s-]?pilot|fullsend|full\s+auto)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'autopilot', args: '' });
+    }
+
+    // Team keywords (intent-gated to prevent false positives on bare "team")
+    // Uses negative lookbehind to exclude possessive/article contexts like "my team", "the team"
+    const hasTeamKeyword = /(?<!\b(?:my|the|our|a|his|her|their|its)\s)\bteam\b/i.test(cleanPrompt) ||
+      /\bcoordinated\s+team\b/i.test(cleanPrompt);
+    if (hasTeamKeyword && isTeamEnabled()) {
+      matches.push({ name: 'team', args: '' });
+    }
+
+    // Ultrawork keywords
+    if (/\b(ultrawork|ulw)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'ultrawork', args: '' });
+    }
+
+    // Pipeline keywords
+    if (/\bagent\s+pipeline\b/i.test(cleanPrompt) || /\bchain\s+agents\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'pipeline', args: '' });
+    }
+
+    // CCG keywords (Claude-Codex-Gemini tri-model orchestration)
+    if (/\b(ccg|claude-codex-gemini)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'ccg', args: '' });
+    }
+
+    // Ralplan keyword
+    if (/\b(ralplan)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'ralplan', args: '' });
+    }
+
+    // TDD keywords
+    if (/\b(tdd)\b/i.test(cleanPrompt) ||
+        /\btest\s+first\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'tdd', args: '' });
+    }
+
+    // Ultrathink keywords
+    if (/\b(ultrathink)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'ultrathink', args: '' });
+    }
+
+    // Deepsearch keywords
+    if (/\b(deepsearch)\b/i.test(cleanPrompt) ||
+        /\bsearch\s+the\s+codebase\b/i.test(cleanPrompt) ||
+        /\bfind\s+in\s+(the\s+)?codebase\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'deepsearch', args: '' });
+    }
+
+    // Analyze keywords
+    if (/\b(deep[\s-]?analyze|deepanalyze)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'analyze', args: '' });
+    }
+
+    // No matches - pass through
+    if (matches.length === 0) {
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       return;
     }
 
-    // Check for ultrathink/think keywords
-    if (/\b(ultrathink|think)\b/.test(cleanPrompt)) {
-      console.log(JSON.stringify({
-        continue: true,
-        hookSpecificOutput: {
-          hookEventName: 'UserPromptSubmit',
-          additionalContext: ULTRATHINK_MESSAGE
-        }
-      }));
+    // Deduplicate matches by keyword name before conflict resolution
+    const seen = new Set();
+    const uniqueMatches = [];
+    for (const m of matches) {
+      if (!seen.has(m.name)) {
+        seen.add(m.name);
+        uniqueMatches.push(m);
+      }
+    }
+
+    // Resolve conflicts
+    const resolved = resolveConflicts(uniqueMatches);
+
+    // Handle cancel specially - clear states and emit
+    if (resolved.length > 0 && resolved[0].name === 'cancel') {
+      clearStateFiles(directory, ['ralph', 'autopilot', 'team', 'ultrawork', 'pipeline']);
+      console.log(JSON.stringify(createHookOutput(createSkillInvocation('cancel', prompt))));
       return;
     }
 
-    // Check for search keywords
-    if (/\b(search|find|locate|lookup|explore|discover|scan|grep|query|browse|detect|trace|seek|track|pinpoint|hunt)\b|where\s+is|show\s+me|list\s+all/.test(cleanPrompt)) {
-      console.log(JSON.stringify({
-        continue: true,
-        hookSpecificOutput: {
-          hookEventName: 'UserPromptSubmit',
-          additionalContext: SEARCH_MESSAGE
-        }
-      }));
+    // Activate states for modes that need them
+    const sessionId = data.sessionId || data.session_id || data.sessionid || '';
+    const stateModes = resolved.filter(m => ['ralph', 'autopilot', 'team', 'ultrawork'].includes(m.name));
+    for (const mode of stateModes) {
+      activateState(directory, prompt, mode.name, sessionId);
+    }
+
+    // Special: Ralph with ultrawork (ralph always includes ultrawork)
+    const hasRalph = resolved.some(m => m.name === 'ralph');
+    const hasUltrawork = resolved.some(m => m.name === 'ultrawork');
+    const hasTeam = resolved.some(m => m.name === 'team');
+    if (hasRalph && !hasUltrawork) {
+      activateState(directory, prompt, 'ultrawork', sessionId);
+    }
+
+    // Link ralph + team if both detected (team-ralph composition)
+    if (hasRalph && hasTeam) {
+      linkRalphTeam(directory, sessionId);
+    }
+
+    // Handle ultrathink specially - prepend message instead of skill invocation
+    const ultrathinkIndex = resolved.findIndex(m => m.name === 'ultrathink');
+    if (ultrathinkIndex !== -1) {
+      // Remove ultrathink from skill list
+      resolved.splice(ultrathinkIndex, 1);
+
+      // If ultrathink was the only match, emit message
+      if (resolved.length === 0) {
+        console.log(JSON.stringify(createHookOutput(ULTRATHINK_MESSAGE)));
+        return;
+      }
+
+      // Otherwise, prepend ultrathink message to skill invocation
+      const skillMessage = createMultiSkillInvocation(resolved, prompt);
+      console.log(JSON.stringify(createHookOutput(ULTRATHINK_MESSAGE + skillMessage)));
       return;
     }
 
-    // Check for analyze keywords
-    if (/\b(analyze|analyse|investigate|examine|research|study|deep.?dive|inspect|audit|evaluate|assess|review|diagnose|scrutinize|dissect|debug|comprehend|interpret|breakdown|understand)\b|why\s+is|how\s+does|how\s+to/.test(cleanPrompt)) {
-      console.log(JSON.stringify({
-        continue: true,
-        hookSpecificOutput: {
-          hookEventName: 'UserPromptSubmit',
-          additionalContext: ANALYZE_MESSAGE
-        }
-      }));
-      return;
+    const skillMatches = resolved;
+    if (skillMatches.length > 0) {
+      console.log(JSON.stringify(createHookOutput(createMultiSkillInvocation(skillMatches, prompt))));
     }
-
-    // No keywords detected
-    console.log(JSON.stringify({ continue: true }));
   } catch (error) {
     // On any error, allow continuation
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
   }
 }
 

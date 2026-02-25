@@ -5,12 +5,21 @@
  */
 
 import * as path from 'path';
+import { dirname } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Dynamic import for the shared stdin module
+const { readStdin } = await import(pathToFileURL(path.join(__dirname, 'lib', 'stdin.mjs')).href);
 
 // Allowed path patterns (no warning)
+// Paths are normalized to forward slashes before matching
 const ALLOWED_PATH_PATTERNS = [
-  /\.omc\//,
-  /\.claude\//,
-  /\/\.claude\//,
+  /^\.omc\//,          // .omc/** (anchored)
+  /^\.claude\//,       // .claude/** (anchored)
+  /\/\.claude\//,      // any /.claude/ path (intentionally unanchored for absolute paths)
   /CLAUDE\.md$/,
   /AGENTS\.md$/,
 ];
@@ -29,7 +38,10 @@ const SOURCE_EXTENSIONS = new Set([
 
 function isAllowedPath(filePath) {
   if (!filePath) return true;
-  return ALLOWED_PATH_PATTERNS.some(pattern => pattern.test(filePath));
+  // Normalize path: convert backslashes, resolve . and .. segments, ensure forward slashes
+  const clean = path.normalize(filePath.replace(/\\/g, '/')).replace(/\\/g, '/');
+  if (clean.startsWith('../') || clean === '..') return false;
+  return ALLOWED_PATH_PATTERNS.some(pattern => pattern.test(clean));
 }
 
 function isSourceFile(filePath) {
@@ -70,18 +82,13 @@ This is a soft warning. Operation will proceed.`;
 }
 
 async function main() {
-  let input = '';
-
-  // Read stdin
-  for await (const chunk of process.stdin) {
-    input += chunk;
-  }
+  const input = await readStdin();
 
   let data;
   try {
     data = JSON.parse(input);
   } catch {
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
     return;
   }
 
@@ -102,14 +109,14 @@ async function main() {
         }
       }));
     } else {
-      console.log(JSON.stringify({ continue: true }));
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
     }
     return;
   }
 
   // Only check Edit and Write tools
   if (!['Edit', 'Write', 'edit', 'write'].includes(toolName)) {
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
     return;
   }
 
@@ -119,13 +126,13 @@ async function main() {
 
   // No file path? Allow
   if (!filePath) {
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
     return;
   }
 
   // Check if allowed path
   if (isAllowedPath(filePath)) {
-    console.log(JSON.stringify({ continue: true }));
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
     return;
   }
 
@@ -149,9 +156,9 @@ This is a soft warning. Operation will proceed.`;
   }
 
   // Not a source file, allow without warning
-  console.log(JSON.stringify({ continue: true }));
+  console.log(JSON.stringify({ continue: true, suppressOutput: true }));
 }
 
 main().catch(() => {
-  console.log(JSON.stringify({ continue: true }));
+  console.log(JSON.stringify({ continue: true, suppressOutput: true }));
 });

@@ -1,8 +1,12 @@
 {
   "mcpServers": {
-    "omc-tools": {
+    "t": {
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/bridge/mcp-server.cjs"]
+    },
+    "team": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bridge/team-mcp.cjs"]
     }
   }
 }

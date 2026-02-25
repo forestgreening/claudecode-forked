@@ -1,5 +1,5 @@
 /**
- * Dynamic Prompt Generator for Oh-My-Claude-Sisyphus
+ * Dynamic Prompt Generator for Oh-My-ClaudeCode
  *
  * Generates orchestrator prompts dynamically from agent metadata.
  * Adding a new agent to definitions.ts automatically includes it in the generated prompt.
@@ -185,7 +185,8 @@ export function convertDefinitionsToConfigs(
   definitions: Record<string, {
     description: string;
     prompt: string;
-    tools: string[];
+    tools?: string[];
+    disallowedTools?: string[];
     model?: string;
     metadata?: any;
   }>
@@ -195,6 +196,7 @@ export function convertDefinitionsToConfigs(
     description: def.description,
     prompt: def.prompt,
     tools: def.tools,
+    disallowedTools: def.disallowedTools,
     model: def.model as any,
     metadata: def.metadata
   }));

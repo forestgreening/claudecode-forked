@@ -5,19 +5,14 @@
  * Claude Code hooks are configured in settings.json and run as shell commands.
  * These scripts receive JSON input via stdin and output JSON to modify behavior.
  *
- * This module provides DUAL implementations:
- * - Bash scripts (.sh) for Unix-like systems (macOS, Linux)
- * - Node.js scripts (.mjs) for cross-platform support (Windows, macOS, Linux)
- *
- * The platform is detected at install time, or can be overridden with:
- *   OMC_USE_NODE_HOOKS=1  - Force Node.js hooks on any platform
- *   OMC_USE_BASH_HOOKS=1  - Force Bash hooks (Unix only)
+ * This module provides Node.js scripts (.mjs) for cross-platform support (Windows, macOS, Linux).
+ * Bash scripts were deprecated in v3.8.6 and removed in v3.9.0.
  */
 
-import { homedir } from 'os';
-import { join, dirname } from 'path';
-import { readFileSync, existsSync } from 'fs';
-import { fileURLToPath } from 'url';
+import { join, dirname } from "path";
+import { readFileSync, existsSync } from "fs";
+import { fileURLToPath } from "url";
+import { getConfigDir } from '../utils/config-dir.js';
 
 // =============================================================================
 // TEMPLATE LOADER (loads hook scripts from templates/hooks/)
@@ -25,13 +20,26 @@ import { fileURLToPath } from 'url';
 
 /**
  * Get the package root directory (where templates/ lives)
- * Works for both development (src/) and production (dist/)
+ * Works for both development (src/), production (dist/), and CJS bundles (bridge/).
+ * When esbuild bundles to CJS, import.meta is replaced with {} so we
+ * fall back to __dirname which is natively available in CJS.
  */
 function getPackageDir(): string {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  // From src/installer/ or dist/installer/, go up two levels to package root
-  return join(__dirname, '..', '..');
+  try {
+    if (import.meta?.url) {
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      // From src/installer/ or dist/installer/, go up two levels to package root
+      return join(__dirname, "..", "..");
+    }
+  } catch {
+    // import.meta.url unavailable — fall through to CJS path
+  }
+  // CJS bundle path: from bridge/ go up 1 level to package root
+  if (typeof __dirname !== "undefined") {
+    return join(__dirname, "..");
+  }
+  return process.cwd();
 }
 
 /**
@@ -41,44 +49,42 @@ function getPackageDir(): string {
  * @throws If the template file is not found
  */
 function loadTemplate(filename: string): string {
-  const templatePath = join(getPackageDir(), 'templates', 'hooks', filename);
+  const templatePath = join(getPackageDir(), "templates", "hooks", filename);
   if (!existsSync(templatePath)) {
     // .sh templates have been removed in favor of .mjs - return empty string for missing bash templates
-    return '';
+    return "";
   }
-  return readFileSync(templatePath, 'utf-8');
+  return readFileSync(templatePath, "utf-8");
 }
 
 // =============================================================================
 // CONSTANTS AND UTILITIES
 // =============================================================================
 
-/** Minimum required Node.js version for hooks */
-export const MIN_NODE_VERSION = 18;
+/** Minimum required Node.js version for hooks (must match package.json engines) */
+export const MIN_NODE_VERSION = 20;
 
 /** Check if running on Windows */
 export function isWindows(): boolean {
-  return process.platform === 'win32';
+  return process.platform === "win32";
 }
 
-/** Check if Node.js hooks should be used (default: true, bash templates removed) */
+/**
+ * Check if Node.js hooks should be used.
+ * @deprecated Always returns true. Bash hooks were removed in v3.9.0.
+ */
 export function shouldUseNodeHooks(): boolean {
-  // Environment variable override to force bash (only if user has custom .sh templates)
-  if (process.env.OMC_USE_BASH_HOOKS === '1') {
-    return false;
-  }
-  // Default: always use Node.js hooks (bash .sh templates removed in v3.8.6)
   return true;
 }
 
 /** Get the Claude config directory path (cross-platform) */
 export function getClaudeConfigDir(): string {
-  return join(homedir(), '.claude');
+  return getConfigDir();
 }
 
 /** Get the hooks directory path */
 export function getHooksDir(): string {
-  return join(getClaudeConfigDir(), 'hooks');
+  return join(getClaudeConfigDir(), "hooks");
 }
 
 /**
@@ -86,7 +92,7 @@ export function getHooksDir(): string {
  * Returns the appropriate syntax for the current platform.
  */
 export function getHomeEnvVar(): string {
-  return isWindows() ? '%USERPROFILE%' : '$HOME';
+  return isWindows() ? "%USERPROFILE%" : "$HOME";
 }
 
 /**
@@ -104,7 +110,7 @@ TELL THE USER WHAT AGENTS YOU WILL LEVERAGE NOW TO SATISFY USER'S REQUEST.
 
 ## AGENT UTILIZATION PRINCIPLES (by capability, not by name)
 - **Codebase Exploration**: Spawn exploration agents using BACKGROUND TASKS for file patterns, internal implementations, project structure
-- **Documentation & References**: Use researcher-type agents via BACKGROUND TASKS for API references, examples, external library docs
+- **Documentation & References**: Use document-specialist agents via BACKGROUND TASKS for API references, examples, external library docs
 - **Planning & Strategy**: NEVER plan yourself - ALWAYS spawn a dedicated planning agent for work breakdown
 - **High-IQ Reasoning**: Leverage specialized agents for architecture decisions, code review, strategic planning
 - **Frontend/UI Tasks**: Delegate to UI-specialized agents for design and implementation
@@ -112,13 +118,13 @@ TELL THE USER WHAT AGENTS YOU WILL LEVERAGE NOW TO SATISFY USER'S REQUEST.
 ## EXECUTION RULES
 - **TODO**: Track EVERY step. Mark complete IMMEDIATELY after each.
 - **PARALLEL**: Fire independent agent calls simultaneously via Task(run_in_background=true) - NEVER wait sequentially.
-- **BACKGROUND FIRST**: Use Task tool for exploration/research agents (10+ concurrent if needed).
+- **BACKGROUND FIRST**: Use Task tool for exploration/document-specialist agents (10+ concurrent if needed).
 - **VERIFY**: Re-read request after completion. Check ALL requirements met before reporting done.
 - **DELEGATE**: Don't do everything yourself - orchestrate specialized agents for their strengths.
 
 ## WORKFLOW
 1. Analyze the request and identify required capabilities
-2. Spawn exploration/researcher agents via Task(run_in_background=true) in PARALLEL (10+ if needed)
+2. Spawn exploration/document-specialist agents via Task(run_in_background=true) in PARALLEL (10+ if needed)
 3. Always Use Plan agent with gathered context to create detailed work breakdown
 4. Execute with continuous verification against original requirements
 
@@ -215,7 +221,7 @@ Use your extended thinking capabilities to provide the most thorough and well-re
 export const SEARCH_MESSAGE = `<search-mode>
 MAXIMIZE SEARCH EFFORT. Launch multiple background agents IN PARALLEL:
 - explore agents (codebase patterns, file structures)
-- researcher agents (remote repos, official docs, GitHub examples)
+- document-specialist agents (remote repos, official docs, GitHub examples)
 Plus direct tools: Grep, Glob
 NEVER stop at first result - be exhaustive.
 </search-mode>
@@ -233,7 +239,7 @@ ANALYSIS MODE. Gather context before diving deep:
 
 CONTEXT GATHERING (parallel):
 - 1-2 explore agents (codebase patterns, implementations)
-- 1-2 researcher agents (if external library involved)
+- 1-2 document-specialist agents (if external library involved)
 - Direct tools: Grep, Glob, LSP for targeted searches
 
 IF COMPLEX (architecture, multi-system, debugging after 2+ failures):
@@ -273,116 +279,41 @@ Ralph mode auto-activates Ultrawork for maximum parallel execution. Follow these
 
 ### Completion Requirements
 - Verify ALL requirements from the original task are met
-- When FULLY complete, output: <promise>TASK_COMPLETE</promise>
 - Architect verification is MANDATORY before claiming completion
+- When FULLY complete, run \`/oh-my-claudecode:cancel\` to cleanly exit and clean up state files
 
 Continue working until the task is truly done.
 `;
-
-/** Keyword detector hook script - loaded from templates/hooks/keyword-detector.sh */
-export const KEYWORD_DETECTOR_SCRIPT = loadTemplate('keyword-detector.sh');
-
-/** Stop continuation hook script - loaded from templates/hooks/stop-continuation.sh */
-export const STOP_CONTINUATION_SCRIPT = loadTemplate('stop-continuation.sh');
 
 // =============================================================================
 // NODE.JS HOOK SCRIPTS (Cross-platform: Windows, macOS, Linux)
 // =============================================================================
 
 /** Node.js keyword detector hook script - loaded from templates/hooks/keyword-detector.mjs */
-export const KEYWORD_DETECTOR_SCRIPT_NODE = loadTemplate('keyword-detector.mjs');
+export const KEYWORD_DETECTOR_SCRIPT_NODE = loadTemplate(
+  "keyword-detector.mjs",
+);
 
 /** Node.js stop continuation hook script - loaded from templates/hooks/stop-continuation.mjs */
-export const STOP_CONTINUATION_SCRIPT_NODE = loadTemplate('stop-continuation.mjs');
-
-// =============================================================================
-// PERSISTENT MODE HOOK SCRIPTS
-// =============================================================================
-
-/** Persistent mode Bash script - loaded from templates/hooks/persistent-mode.sh */
-export const PERSISTENT_MODE_SCRIPT = loadTemplate('persistent-mode.sh');
-
-/** Session start Bash script - loaded from templates/hooks/session-start.sh */
-export const SESSION_START_SCRIPT = loadTemplate('session-start.sh');
+export const STOP_CONTINUATION_SCRIPT_NODE = loadTemplate(
+  "stop-continuation.mjs",
+);
 
 /** Node.js persistent mode hook script - loaded from templates/hooks/persistent-mode.mjs */
-export const PERSISTENT_MODE_SCRIPT_NODE = loadTemplate('persistent-mode.mjs');
+export const PERSISTENT_MODE_SCRIPT_NODE = loadTemplate("persistent-mode.mjs");
+
+/** Node.js code simplifier hook script - loaded from templates/hooks/code-simplifier.mjs */
+export const CODE_SIMPLIFIER_SCRIPT_NODE = loadTemplate("code-simplifier.mjs");
 
 /** Node.js session start hook script - loaded from templates/hooks/session-start.mjs */
-export const SESSION_START_SCRIPT_NODE = loadTemplate('session-start.mjs');
-
-// =============================================================================
-// POST-TOOL-USE HOOK (Remember Tag Processing)
-// =============================================================================
-
-/** Post-tool-use Bash script - loaded from templates/hooks/post-tool-use.sh */
-export const POST_TOOL_USE_SCRIPT = loadTemplate('post-tool-use.sh');
+export const SESSION_START_SCRIPT_NODE = loadTemplate("session-start.mjs");
 
 /** Post-tool-use Node.js script - loaded from templates/hooks/post-tool-use.mjs */
-export const POST_TOOL_USE_SCRIPT_NODE = loadTemplate('post-tool-use.mjs');
+export const POST_TOOL_USE_SCRIPT_NODE = loadTemplate("post-tool-use.mjs");
 
 // =============================================================================
-// SETTINGS CONFIGURATION (Platform-aware)
+// SETTINGS CONFIGURATION
 // =============================================================================
-
-/**
- * Settings.json hooks configuration for Bash (Unix)
- * Configures Claude Code to run our bash hook scripts
- */
-export const HOOKS_SETTINGS_CONFIG_BASH = {
-  hooks: {
-    UserPromptSubmit: [
-      {
-        hooks: [
-          {
-            type: "command" as const,
-            command: "bash $HOME/.claude/hooks/keyword-detector.sh"
-          }
-        ]
-      }
-    ],
-    SessionStart: [
-      {
-        hooks: [
-          {
-            type: "command" as const,
-            command: "bash $HOME/.claude/hooks/session-start.sh"
-          }
-        ]
-      }
-    ],
-    PreToolUse: [
-      {
-        hooks: [
-          {
-            type: "command" as const,
-            command: "bash $HOME/.claude/hooks/pre-tool-use.sh"
-          }
-        ]
-      }
-    ],
-    PostToolUse: [
-      {
-        hooks: [
-          {
-            type: "command" as const,
-            command: "bash $HOME/.claude/hooks/post-tool-use.sh"
-          }
-        ]
-      }
-    ],
-    Stop: [
-      {
-        hooks: [
-          {
-            type: "command" as const,
-            command: "bash $HOME/.claude/hooks/persistent-mode.sh"
-          }
-        ]
-      }
-    ]
-  }
-};
 
 /**
  * Settings.json hooks configuration for Node.js (Cross-platform)
@@ -399,10 +330,10 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
             // On Unix with node hooks, $HOME is expanded by the shell
             command: isWindows()
               ? 'node "%USERPROFILE%\\.claude\\hooks\\keyword-detector.mjs"'
-              : 'node "$HOME/.claude/hooks/keyword-detector.mjs"'
-          }
-        ]
-      }
+              : 'node "$HOME/.claude/hooks/keyword-detector.mjs"',
+          },
+        ],
+      },
     ],
     SessionStart: [
       {
@@ -411,10 +342,10 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
             type: "command" as const,
             command: isWindows()
               ? 'node "%USERPROFILE%\\.claude\\hooks\\session-start.mjs"'
-              : 'node "$HOME/.claude/hooks/session-start.mjs"'
-          }
-        ]
-      }
+              : 'node "$HOME/.claude/hooks/session-start.mjs"',
+          },
+        ],
+      },
     ],
     PreToolUse: [
       {
@@ -423,10 +354,10 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
             type: "command" as const,
             command: isWindows()
               ? 'node "%USERPROFILE%\\.claude\\hooks\\pre-tool-use.mjs"'
-              : 'node "$HOME/.claude/hooks/pre-tool-use.mjs"'
-          }
-        ]
-      }
+              : 'node "$HOME/.claude/hooks/pre-tool-use.mjs"',
+          },
+        ],
+      },
     ],
     PostToolUse: [
       {
@@ -435,10 +366,22 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
             type: "command" as const,
             command: isWindows()
               ? 'node "%USERPROFILE%\\.claude\\hooks\\post-tool-use.mjs"'
-              : 'node "$HOME/.claude/hooks/post-tool-use.mjs"'
-          }
-        ]
-      }
+              : 'node "$HOME/.claude/hooks/post-tool-use.mjs"',
+          },
+        ],
+      },
+    ],
+    PostToolUseFailure: [
+      {
+        hooks: [
+          {
+            type: "command" as const,
+            command: isWindows()
+              ? 'node "%USERPROFILE%\\.claude\\hooks\\post-tool-use-failure.mjs"'
+              : 'node "$HOME/.claude/hooks/post-tool-use-failure.mjs"',
+          },
+        ],
+      },
     ],
     Stop: [
       {
@@ -447,74 +390,59 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
             type: "command" as const,
             command: isWindows()
               ? 'node "%USERPROFILE%\\.claude\\hooks\\persistent-mode.mjs"'
-              : 'node "$HOME/.claude/hooks/persistent-mode.mjs"'
-          }
-        ]
-      }
-    ]
-  }
+              : 'node "$HOME/.claude/hooks/persistent-mode.mjs"',
+          },
+        ],
+      },
+      {
+        hooks: [
+          {
+            type: "command" as const,
+            command: isWindows()
+              ? 'node "%USERPROFILE%\\.claude\\hooks\\code-simplifier.mjs"'
+              : 'node "$HOME/.claude/hooks/code-simplifier.mjs"',
+          },
+        ],
+      },
+    ],
+  },
 };
 
 /**
- * Get the appropriate hooks settings config for the current platform
+ * Get the hooks settings config (Node.js only).
+ *
+ * @deprecated Hooks are now delivered via the plugin's hooks/hooks.json.
+ * settings.json hook entries are no longer written by the installer.
+ * Kept for test compatibility only.
  */
-export function getHooksSettingsConfig(): typeof HOOKS_SETTINGS_CONFIG_BASH {
-  return shouldUseNodeHooks() ? HOOKS_SETTINGS_CONFIG_NODE : HOOKS_SETTINGS_CONFIG_BASH;
+export function getHooksSettingsConfig(): typeof HOOKS_SETTINGS_CONFIG_NODE {
+  return HOOKS_SETTINGS_CONFIG_NODE;
 }
 
-/**
- * Legacy: Settings.json hooks configuration (Bash)
- * @deprecated Use getHooksSettingsConfig() for cross-platform support
- */
-export const HOOKS_SETTINGS_CONFIG = HOOKS_SETTINGS_CONFIG_BASH;
-
 // =============================================================================
-// HOOK SCRIPTS EXPORTS (Platform-aware)
+// HOOK SCRIPTS EXPORTS
 // =============================================================================
-
-/**
- * Get Bash hook scripts (Unix only)
- * Returns a record of filename -> content for all bash hooks
- */
-export function getHookScriptsBash(): Record<string, string> {
-  return {
-    'keyword-detector.sh': loadTemplate('keyword-detector.sh'),
-    'stop-continuation.sh': loadTemplate('stop-continuation.sh'),
-    'persistent-mode.sh': loadTemplate('persistent-mode.sh'),
-    'session-start.sh': loadTemplate('session-start.sh'),
-    'pre-tool-use.sh': loadTemplate('pre-tool-use.sh'),
-    'post-tool-use.sh': loadTemplate('post-tool-use.sh')
-  };
-}
 
 /**
  * Get Node.js hook scripts (Cross-platform)
  * Returns a record of filename -> content for all Node.js hooks
- */
-export function getHookScriptsNode(): Record<string, string> {
-  return {
-    'keyword-detector.mjs': loadTemplate('keyword-detector.mjs'),
-    'stop-continuation.mjs': loadTemplate('stop-continuation.mjs'),
-    'persistent-mode.mjs': loadTemplate('persistent-mode.mjs'),
-    'session-start.mjs': loadTemplate('session-start.mjs'),
-    'pre-tool-use.mjs': loadTemplate('pre-tool-use.mjs'),
-    'post-tool-use.mjs': loadTemplate('post-tool-use.mjs')
-  };
-}
-
-/**
- * Get the appropriate hook scripts for the current platform
+ *
+ * @deprecated Hook scripts are no longer installed to ~/.claude/hooks/.
+ * All hooks are delivered via the plugin's hooks/hooks.json + scripts/.
+ * Kept for test compatibility only.
  */
 export function getHookScripts(): Record<string, string> {
-  return shouldUseNodeHooks() ? getHookScriptsNode() : getHookScriptsBash();
+  return {
+    "keyword-detector.mjs": loadTemplate("keyword-detector.mjs"),
+    "stop-continuation.mjs": loadTemplate("stop-continuation.mjs"),
+    "persistent-mode.mjs": loadTemplate("persistent-mode.mjs"),
+    "session-start.mjs": loadTemplate("session-start.mjs"),
+    "pre-tool-use.mjs": loadTemplate("pre-tool-use.mjs"),
+    "post-tool-use.mjs": loadTemplate("post-tool-use.mjs"),
+    "post-tool-use-failure.mjs": loadTemplate("post-tool-use-failure.mjs"),
+    "code-simplifier.mjs": loadTemplate("code-simplifier.mjs"),
+    // Shared library modules (in lib/ subdirectory)
+    "lib/stdin.mjs": loadTemplate("lib/stdin.mjs"),
+    "lib/atomic-write.mjs": loadTemplate("lib/atomic-write.mjs"),
+  };
 }
-
-// Legacy exports for backward compatibility (these call the loader functions)
-/** @deprecated Use getHookScriptsBash() instead */
-export const HOOK_SCRIPTS_BASH: Record<string, string> = getHookScriptsBash();
-
-/** @deprecated Use getHookScriptsNode() instead */
-export const HOOK_SCRIPTS_NODE: Record<string, string> = getHookScriptsNode();
-
-/** @deprecated Use getHookScripts() for cross-platform support */
-export const HOOK_SCRIPTS: Record<string, string> = HOOK_SCRIPTS_BASH;

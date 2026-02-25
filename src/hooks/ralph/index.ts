@@ -19,8 +19,10 @@ export {
 
   // Loop control
   createRalphLoopHook,
-  detectCompletionPromise,
   isUltraQAActive,
+
+  // Team coordination
+  getTeamPhaseDirective,
 
   // PRD integration
   hasPrd,

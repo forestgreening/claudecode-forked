@@ -7,7 +7,7 @@ import { mkdirSync } from 'fs';
 
 // Import the hooks
 import { startUltraQA, clearUltraQAState, isRalphLoopActive } from '../src/hooks/ultraqa/index.js';
-import { createRalphLoopHook, clearRalphState, isUltraQAActive } from '../src/hooks/ralph-loop/index.js';
+import { createRalphLoopHook, clearRalphState, isUltraQAActive } from '../src/hooks/ralph/index.js';
 
 // Test utilities
 function printTest(testName: string, passed: boolean) {
@@ -18,10 +18,10 @@ function printTest(testName: string, passed: boolean) {
 async function runTests() {
   console.log('\n=== Testing Mutual Exclusion Between UltraQA and Ralph Loop ===\n');
 
-  // Create temp directory with .sisyphus subfolder
-  const tempDir = mkdtempSync(join(tmpdir(), 'sisyphus-test-'));
-  const sisyphusDir = join(tempDir, '.sisyphus');
-  mkdirSync(sisyphusDir, { recursive: true });
+  // Create temp directory with .omc subfolder
+  const tempDir = mkdtempSync(join(tmpdir(), 'omc-test-'));
+  const omcDir = join(tempDir, '.omc');
+  mkdirSync(omcDir, { recursive: true });
 
   console.log(`Using temp directory: ${tempDir}\n`);
 
@@ -36,7 +36,7 @@ async function runTests() {
     const ralphStarted = ralphHook.startLoop(
       'test-session-1',
       'test task',
-      { maxIterations: 5, completionPromise: 'TASK_COMPLETE' }
+      { maxIterations: 5 }
     );
 
     if (!ralphStarted) {
@@ -86,7 +86,7 @@ async function runTests() {
     const ralphStarted2 = ralphHook2.startLoop(
       'test-session-4',
       'test task',
-      { maxIterations: 5, completionPromise: 'TASK_COMPLETE' }
+      { maxIterations: 5 }
     );
 
     if (ralphStarted2) {

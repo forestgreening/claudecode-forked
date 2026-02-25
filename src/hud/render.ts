@@ -5,6 +5,7 @@
  */
 
 import type { HudRenderContext, HudConfig } from './types.js';
+import { DEFAULT_HUD_CONFIG } from './types.js';
 import { bold, dim } from './colors.js';
 import { renderRalph } from './elements/ralph.js';
 import { renderAgentsByFormat, renderAgentsMultiLine } from './elements/agents.js';
@@ -13,51 +14,33 @@ import { renderSkills, renderLastSkill } from './elements/skills.js';
 import { renderContext, renderContextWithBar } from './elements/context.js';
 import { renderBackground } from './elements/background.js';
 import { renderPrd } from './elements/prd.js';
-import { renderRateLimits, renderRateLimitsWithBar } from './elements/limits.js';
+import { renderRateLimits, renderRateLimitsWithBar, renderCustomBuckets } from './elements/limits.js';
 import { renderPermission } from './elements/permission.js';
 import { renderThinking } from './elements/thinking.js';
 import { renderSession } from './elements/session.js';
+import { renderPromptTime } from './elements/prompt-time.js';
 import { renderAutopilot } from './elements/autopilot.js';
-import {
-  getAnalyticsDisplay,
-  renderAnalyticsLineWithConfig,
-  getSessionInfo,
-  getSessionHealthAnalyticsData,
-  renderBudgetWarning,
-  renderCacheEfficiency
-} from './analytics-display.js';
-import type { SessionHealth, HudElementConfig } from './types.js';
+import { renderCwd } from './elements/cwd.js';
+import { renderGitRepo, renderGitBranch } from './elements/git.js';
+import { renderModel } from './elements/model.js';
+import { renderCallCounts } from './elements/call-counts.js';
+import { renderContextLimitWarning } from './elements/context-warning.js';
 
 /**
- * Render session health analytics respecting config toggles.
- * Composes output from getSessionHealthAnalyticsData() based on showCache/showCost flags.
+ * Limit output lines to prevent input field shrinkage (Issue #222).
+ * Trims lines from the end while preserving the first (header) line.
+ *
+ * @param lines - Array of output lines
+ * @param maxLines - Maximum number of lines to output (uses DEFAULT_HUD_CONFIG if not specified)
+ * @returns Trimmed array of lines
  */
-function renderSessionHealthAnalyticsWithConfig(
-  sessionHealth: SessionHealth,
-  enabledElements: HudElementConfig
-): string {
-  const data = getSessionHealthAnalyticsData(sessionHealth);
-  const parts: string[] = [];
-
-  // Cost indicator and cost amount (respects showCost)
-  if (enabledElements.showCost) {
-    parts.push(data.costIndicator, data.cost);
+export function limitOutputLines(lines: string[], maxLines?: number): string[] {
+  const limit = Math.max(1, maxLines ?? DEFAULT_HUD_CONFIG.elements.maxOutputLines);
+  if (lines.length <= limit) {
+    return lines;
   }
-
-  // Tokens always shown (not a cost/cache thing)
-  parts.push(data.tokens);
-
-  // Cache (respects showCache)
-  if (enabledElements.showCache) {
-    parts.push(`Cache: ${data.cache}`);
-  }
-
-  // Cost per hour (respects showCost)
-  if (enabledElements.showCost && data.costHour) {
-    parts.push(data.costHour);
-  }
-
-  return parts.join(' | ');
+  const truncatedCount = lines.length - limit + 1;
+  return [...lines.slice(0, limit - 1), `... (+${truncatedCount} lines)`];
 }
 
 /**
@@ -68,50 +51,41 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
   const detailLines: string[] = [];
   const { elements: enabledElements } = config;
 
-  // Check if analytics preset is active
-  if (config.preset === 'analytics') {
-    const analytics = await getAnalyticsDisplay();
-    const sessionInfo = await getSessionInfo();
+  // Git info line (separate line above HUD)
+  const gitElements: string[] = [];
 
-    // Render analytics-focused layout
-    const lines = [sessionInfo, renderAnalyticsLineWithConfig(analytics, enabledElements.showCost, enabledElements.showCache)];
-
-    // Add SessionHealth analytics if available
-    if (context.sessionHealth) {
-      const healthAnalytics = renderSessionHealthAnalyticsWithConfig(context.sessionHealth, enabledElements);
-      if (healthAnalytics) lines.push(healthAnalytics);
-
-      // Cache efficiency (respects showCache)
-      if (enabledElements.showCache) {
-        const cacheEfficiency = renderCacheEfficiency(context.sessionHealth);
-        if (cacheEfficiency) lines.push(cacheEfficiency);
-      }
-
-      // Budget warning (respects showCost)
-      if (enabledElements.showCost) {
-        const budgetWarning = renderBudgetWarning(context.sessionHealth);
-        if (budgetWarning) lines.push(budgetWarning);
-      }
-    }
-
-    // Add agents if available
-    if (context.activeAgents.length > 0) {
-      const agents = renderAgentsByFormat(context.activeAgents, enabledElements.agentsFormat || 'codes');
-      if (agents) lines.push(agents);
-    }
-
-    // Add todos if available
-    if (enabledElements.todos) {
-      const todos = renderTodosWithCurrent(context.todos);
-      if (todos) lines.push(todos);
-    }
-
-    return lines.join('\n');
+  // Working directory
+  if (enabledElements.cwd) {
+    const cwdElement = renderCwd(context.cwd, enabledElements.cwdFormat || 'relative');
+    if (cwdElement) gitElements.push(cwdElement);
   }
 
-  // [OMC] label
+  // Git repository name
+  if (enabledElements.gitRepo) {
+    const gitRepoElement = renderGitRepo(context.cwd);
+    if (gitRepoElement) gitElements.push(gitRepoElement);
+  }
+
+  // Git branch
+  if (enabledElements.gitBranch) {
+    const gitBranchElement = renderGitBranch(context.cwd);
+    if (gitBranchElement) gitElements.push(gitBranchElement);
+  }
+
+  // Model name
+  if (enabledElements.model && context.modelName) {
+    const modelElement = renderModel(context.modelName, enabledElements.modelFormat);
+    if (modelElement) gitElements.push(modelElement);
+  }
+
+  // [OMC#X.Y.Z] label with optional update notification
   if (enabledElements.omcLabel) {
-    elements.push(bold('[OMC]'));
+    const versionTag = context.omcVersion ? `#${context.omcVersion}` : '';
+    if (context.updateAvailable) {
+      elements.push(bold(`[OMC${versionTag}] -> ${context.updateAvailable} omc update`));
+    } else {
+      elements.push(bold(`[OMC${versionTag}]`));
+    }
   }
 
   // Rate limits (5h and weekly)
@@ -122,6 +96,13 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
     if (limits) elements.push(limits);
   }
 
+  // Custom rate limit buckets
+  if (context.customBuckets) {
+    const thresholdPercent = config.rateLimitsProvider?.resetsAtDisplayThresholdPercent;
+    const custom = renderCustomBuckets(context.customBuckets, thresholdPercent);
+    if (custom) elements.push(custom);
+  }
+
   // Permission status indicator (heuristic-based)
   if (enabledElements.permissionStatus && context.pendingPermission) {
     const permission = renderPermission(context.pendingPermission);
@@ -130,23 +111,24 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
 
   // Extended thinking indicator
   if (enabledElements.thinking && context.thinkingState) {
-    const thinking = renderThinking(context.thinkingState);
+    const thinking = renderThinking(context.thinkingState, enabledElements.thinkingFormat || 'text');
     if (thinking) elements.push(thinking);
+  }
+
+  // Prompt submission time
+  if (enabledElements.promptTime) {
+    const prompt = renderPromptTime(context.promptTime);
+    if (prompt) elements.push(prompt);
   }
 
   // Session health indicator
   if (enabledElements.sessionHealth && context.sessionHealth) {
-    const session = renderSession(context.sessionHealth);
-    if (session) elements.push(session);
-
-    // Add analytics inline if available (respects showCache/showCost)
-    const analytics = renderSessionHealthAnalyticsWithConfig(context.sessionHealth, enabledElements);
-    if (analytics) elements.push(analytics);
-
-    // Add budget warning to detail lines if needed (respects showCost)
-    if (enabledElements.showCost) {
-      const warning = renderBudgetWarning(context.sessionHealth);
-      if (warning) detailLines.push(warning);
+    // Session duration display (session:19m)
+    // If showSessionDuration is explicitly set, use it; otherwise default to true (backward compat)
+    const showDuration = enabledElements.showSessionDuration ?? true;
+    if (showDuration) {
+      const session = renderSession(context.sessionHealth);
+      if (session) elements.push(session);
     }
   }
 
@@ -215,35 +197,43 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
     if (bg) elements.push(bg);
   }
 
-  // Compose output
-  const headerLine = elements.join(dim(' | '));
+  // Call counts on the right side of the status line (Issue #710)
+  // Controlled by showCallCounts config option (default: true)
+  const showCounts = enabledElements.showCallCounts ?? true;
+  if (showCounts) {
+    const counts = renderCallCounts(
+      context.toolCallCount,
+      context.agentCallCount,
+      context.skillCallCount,
+    );
+    if (counts) elements.push(counts);
+  }
 
-  // Todos on second line (if available)
+  // Context limit warning banner (shown when ctx% >= threshold)
+  const ctxWarning = renderContextLimitWarning(
+    context.contextPercent,
+    config.contextLimitWarning.threshold,
+    config.contextLimitWarning.autoCompact
+  );
+  if (ctxWarning) detailLines.push(ctxWarning);
+
+  // Compose output
+  const outputLines: string[] = [];
+
+  // Git info line (separate line above HUD header)
+  if (gitElements.length > 0) {
+    outputLines.push(gitElements.join(dim(' | ')));
+  }
+
+  // HUD header line
+  const headerLine = elements.join(dim(' | '));
+  outputLines.push(headerLine);
+
+  // Todos on next line (if available)
   if (enabledElements.todos) {
     const todos = renderTodosWithCurrent(context.todos);
     if (todos) detailLines.push(todos);
   }
 
-  // Optionally add analytics line for full/dense presets
-  if (config.preset === 'full' || config.preset === 'dense') {
-    try {
-      const analytics = await getAnalyticsDisplay();
-      detailLines.push(renderAnalyticsLineWithConfig(analytics, enabledElements.showCost, enabledElements.showCache));
-
-      // Also add cache efficiency if SessionHealth available (respects showCache)
-      if (enabledElements.showCache && context.sessionHealth?.cacheHitRate !== undefined) {
-        const cacheEfficiency = renderCacheEfficiency(context.sessionHealth);
-        if (cacheEfficiency) detailLines.push(cacheEfficiency);
-      }
-    } catch {
-      // Analytics not available, skip
-    }
-  }
-
-  // If we have detail lines, output multi-line
-  if (detailLines.length > 0) {
-    return [headerLine, ...detailLines].join('\n');
-  }
-
-  return headerLine;
+  return limitOutputLines([...outputLines, ...detailLines], config.elements.maxOutputLines).join('\n');
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   extractLexicalSignals,
   extractStructuralSignals,
@@ -25,7 +25,6 @@ import {
   canEscalate,
   getModelForTask,
   quickTierForAgent,
-  isFixedTierAgent,
   analyzeTaskComplexity,
 } from '../features/model-routing/router.js';
 import type {
@@ -492,17 +491,6 @@ describe('Routing Rules', () => {
       expect(result.ruleName).toBe('explicit-model-specified');
     });
 
-    it('should evaluate orchestrator rule', () => {
-      const context: RoutingContext = {
-        taskPrompt: 'test',
-        agentType: 'coordinator',
-      };
-      const signals = extractAllSignals(context.taskPrompt, context);
-      const result = evaluateRules(context, signals);
-
-      expect(result.tier).toBe('HIGH');
-      expect(result.ruleName).toBe('orchestrator-fixed-opus');
-    });
 
     it('should evaluate architect complex debugging rule', () => {
       const context: RoutingContext = {
@@ -565,12 +553,12 @@ describe('Routing Rules', () => {
       const context: RoutingContext = {
         taskPrompt: 'test',
         explicitModel: 'haiku',
-        agentType: 'coordinator',
+        agentType: 'architect',
       };
       const signals = extractAllSignals(context.taskPrompt, context);
       const result = evaluateRules(context, signals);
 
-      // Explicit model (priority 100) should win over orchestrator (priority 90)
+      // Explicit model (priority 100) should win over other rules
       expect(result.tier).toBe('EXPLICIT');
       expect(result.ruleName).toBe('explicit-model-specified');
     });
@@ -648,6 +636,7 @@ describe('Routing Rules', () => {
 // ============ Router Tests ============
 
 describe('Router', () => {
+
   describe('routeTask', () => {
     it('should route simple task to LOW tier', () => {
       const context: RoutingContext = {
@@ -668,7 +657,7 @@ describe('Router', () => {
 
       expect(decision.tier).toBe('HIGH');
       expect(decision.modelType).toBe('opus');
-      expect(decision.model).toBe('claude-opus-4-5-20251101');
+      expect(decision.model).toBe('claude-opus-4-6-20260205');
     });
 
     it('should respect explicit model override', () => {
@@ -685,11 +674,11 @@ describe('Router', () => {
     it('should respect agent overrides', () => {
       const context: RoutingContext = {
         taskPrompt: 'test',
-        agentType: 'coordinator',
+        agentType: 'custom-agent',
       };
       const decision = routeTask(context, {
         agentOverrides: {
-          'coordinator': { tier: 'HIGH', reason: 'Test override' },
+          'custom-agent': { tier: 'HIGH', reason: 'Test override' },
         },
       });
 
@@ -724,6 +713,18 @@ describe('Router', () => {
       expect(decision.confidence).toBeGreaterThan(0);
       expect(decision.confidence).toBeLessThanOrEqual(1);
     });
+
+    it('should clamp LOW tier to MEDIUM when minTier=MEDIUM', () => {
+      const context: RoutingContext = {
+        taskPrompt: 'Find the config file',
+      };
+      const decision = routeTask(context, { minTier: 'MEDIUM' });
+
+      expect(decision.tier).toBe('MEDIUM');
+      expect(decision.modelType).toBe('sonnet');
+      expect(decision.reasons.join(' ')).toContain('Min tier enforced');
+    });
+
   });
 
   describe('escalateModel', () => {
@@ -776,31 +777,8 @@ describe('Router', () => {
     });
   });
 
-  describe('isFixedTierAgent', () => {
-    it('should return true for coordinator', () => {
-      expect(isFixedTierAgent('coordinator')).toBe(true);
-    });
-
-    it('should return false for architect', () => {
-      expect(isFixedTierAgent('architect')).toBe(false);
-    });
-
-    it('should return false for executor', () => {
-      expect(isFixedTierAgent('executor')).toBe(false);
-    });
-
-    it('should return false for unknown agent', () => {
-      expect(isFixedTierAgent('unknown-agent')).toBe(false);
-    });
-  });
 
   describe('getModelForTask', () => {
-    it('should return opus for orchestrator', () => {
-      const result = getModelForTask('coordinator', 'test task');
-      expect(result.model).toBe('opus');
-      expect(result.tier).toBe('HIGH');
-    });
-
     it('should return adaptive model for architect with simple task', () => {
       const result = getModelForTask('architect', 'find the file');
       expect(result.model).toBe('haiku');

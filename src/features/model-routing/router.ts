@@ -13,7 +13,6 @@ import type {
 } from './types.js';
 import {
   DEFAULT_ROUTING_CONFIG,
-  TIER_MODELS,
   TIER_TO_MODEL_TYPE,
 } from './types.js';
 import { extractAllSignals } from './signals.js';
@@ -31,19 +30,19 @@ export function routeTask(
 
   // If routing is disabled, use default tier
   if (!mergedConfig.enabled) {
-    return createDecision(mergedConfig.defaultTier, ['Routing disabled, using default tier'], false);
+    return createDecision(mergedConfig.defaultTier, mergedConfig.tierModels, ['Routing disabled, using default tier'], false);
   }
 
   // If explicit model is specified, respect it
   if (context.explicitModel) {
-    const tier = modelTypeToTier(context.explicitModel);
-    return createDecision(tier, ['Explicit model specified by user'], false);
+    const explicitTier = modelTypeToTier(context.explicitModel);
+    return createDecision(explicitTier, mergedConfig.tierModels, ['Explicit model specified by user'], false, explicitTier);
   }
 
   // Check for agent-specific overrides
   if (context.agentType && mergedConfig.agentOverrides?.[context.agentType]) {
     const override = mergedConfig.agentOverrides[context.agentType];
-    return createDecision(override.tier, [override.reason], false);
+    return createDecision(override.tier, mergedConfig.tierModels, [override.reason], false, override.tier);
   }
 
   // Extract signals from the task
@@ -54,7 +53,7 @@ export function routeTask(
 
   if (ruleResult.tier === 'EXPLICIT') {
     // Explicit model was handled above, this shouldn't happen
-    return createDecision('MEDIUM', ['Unexpected EXPLICIT tier'], false);
+    return createDecision('MEDIUM', mergedConfig.tierModels, ['Unexpected EXPLICIT tier'], false);
   }
 
   // Calculate score for confidence and logging
@@ -62,16 +61,28 @@ export function routeTask(
   const scoreTier = scoreToTier(score);
   const confidence = calculateConfidence(score, ruleResult.tier);
 
+  let finalTier = ruleResult.tier;
   const reasons = [
     ruleResult.reason,
     `Rule: ${ruleResult.ruleName}`,
     `Score: ${score} (${scoreTier} tier by score)`,
   ];
 
+  // Enforce minTier if configured
+  if (mergedConfig.minTier) {
+    const tierOrder: ComplexityTier[] = ['LOW', 'MEDIUM', 'HIGH'];
+    const currentIdx = tierOrder.indexOf(finalTier);
+    const minIdx = tierOrder.indexOf(mergedConfig.minTier);
+    if (currentIdx < minIdx) {
+      finalTier = mergedConfig.minTier;
+      reasons.push(`Min tier enforced: ${ruleResult.tier} -> ${finalTier}`);
+    }
+  }
+
   return {
-    model: mergedConfig.tierModels[ruleResult.tier],
-    modelType: TIER_TO_MODEL_TYPE[ruleResult.tier],
-    tier: ruleResult.tier,
+    model: mergedConfig.tierModels[finalTier],
+    modelType: TIER_TO_MODEL_TYPE[finalTier],
+    tier: finalTier,
     confidence,
     reasons,
     escalated: false,
@@ -83,12 +94,13 @@ export function routeTask(
  */
 function createDecision(
   tier: ComplexityTier,
+  tierModels: Record<ComplexityTier, string>,
   reasons: string[],
   escalated: boolean,
   originalTier?: ComplexityTier
 ): RoutingDecision {
   return {
-    model: TIER_MODELS[tier],
+    model: tierModels[tier],
     modelType: TIER_TO_MODEL_TYPE[tier],
     tier,
     confidence: escalated ? 0.9 : 0.7, // Higher confidence after escalation
@@ -217,32 +229,16 @@ export function quickTierForAgent(agentType: string): ComplexityTier | null {
     analyst: 'HIGH',
     explore: 'LOW',
     'writer': 'LOW',
+    'document-specialist': 'MEDIUM',
     researcher: 'MEDIUM',
+    'test-engineer': 'MEDIUM',
+    'tdd-guide': 'MEDIUM',
     'executor': 'MEDIUM',
     'designer': 'MEDIUM',
     'vision': 'MEDIUM',
-    // DEPRECATED: coordinator merged into default mode (v2.0)
-    // Kept for backward compatibility if users still have it installed
-    'coordinator': 'MEDIUM',
   };
 
   return agentTiers[agentType] ?? null;
-}
-
-/**
- * Check if an agent has a fixed tier (cannot be overridden)
- *
- * Only ORCHESTRATOR agents are fixed to Opus - they need to analyze
- * complexity and delegate. All other agents are adaptive.
- *
- * NOTE: coordinator was deprecated in v2.0 (merged into default mode)
- * but kept here for backward compatibility if users still have it installed.
- */
-export function isFixedTierAgent(agentType: string): boolean {
-  // Only orchestrators are fixed - they need Opus to analyze and delegate
-  // DEPRECATED: coordinator merged into default mode (v2.0)
-  const fixedAgents = ['coordinator'];
-  return fixedAgents.includes(agentType);
 }
 
 
@@ -252,11 +248,7 @@ export function isFixedTierAgent(agentType: string): boolean {
  * This is the main entry point for orchestrator model routing.
  * The orchestrator calls this to determine which model to use when delegating.
  *
- * ALL agents are adaptive EXCEPT orchestrators (which need Opus to analyze and delegate).
- *
- * Routing hierarchy:
- * 1. Fixed-tier (orchestrators only) → always Opus (they analyze complexity)
- * 2. All other agents → adaptive based on task complexity
+ * ALL agents are adaptive based on task complexity.
  *
  * @param agentType - The agent to delegate to
  * @param taskPrompt - The task description
@@ -267,17 +259,7 @@ export function getModelForTask(
   taskPrompt: string,
   config: Partial<RoutingConfig> = {}
 ): { model: 'haiku' | 'sonnet' | 'opus'; tier: ComplexityTier; reason: string } {
-  // Fixed-tier agents (orchestrators only) always use Opus
-  // They need to analyze complexity and delegate - can't use a simpler model
-  if (isFixedTierAgent(agentType)) {
-    return {
-      model: 'opus',
-      tier: 'HIGH',
-      reason: `${agentType} is an orchestrator (always Opus - analyzes and delegates)`,
-    };
-  }
-
-  // All other agents are adaptive based on task complexity
+  // All agents are adaptive based on task complexity
   // Use agent-specific rules for advisory agents, general rules for others
   const decision = routeTask({ taskPrompt, agentType }, config);
 
