@@ -16,11 +16,14 @@ export { analystAgent, ANALYST_PROMPT_METADATA } from './analyst.js';
 export { plannerAgent, PLANNER_PROMPT_METADATA } from './planner.js';
 export { qaTesterAgent, QA_TESTER_PROMPT_METADATA } from './qa-tester.js';
 export { scientistAgent, SCIENTIST_PROMPT_METADATA } from './scientist.js';
+export { deepExecutorAgent, DEEP_EXECUTOR_PROMPT_METADATA } from './deep-executor.js';
+export { flutterEngineerAgent, FLUTTER_ENGINEER_PROMPT_METADATA } from './flutter-engineer.js';
+export { founderAgent, FOUNDER_PROMPT_METADATA } from './founder.js';
 /** @deprecated Use document-specialist agent instead */
 export { documentSpecialistAgent, DOCUMENT_SPECIALIST_PROMPT_METADATA } from './document-specialist.js';
 /** @deprecated Use document-specialist agent instead */
 export { documentSpecialistAgent as researcherAgent } from './document-specialist.js';
-export { deepExecutorAgent, debuggerAgent, verifierAgent } from './definitions.js';
+export { debuggerAgent, verifierAgent } from './definitions.js';
 export { qualityReviewerAgent } from './definitions.js';
 export { testEngineerAgent } from './definitions.js';
 export { securityReviewerAgent, buildFixerAgent, codeReviewerAgent, gitMasterAgent, codeSimplifierAgent } from './definitions.js';

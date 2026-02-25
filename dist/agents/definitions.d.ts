@@ -19,6 +19,8 @@ export { executorAgent } from './executor.js';
 export { plannerAgent } from './planner.js';
 export { qaTesterAgent } from './qa-tester.js';
 export { scientistAgent } from './scientist.js';
+export { flutterEngineerAgent } from './flutter-engineer.js';
+export { founderAgent } from './founder.js';
 export { exploreAgent } from './explore.js';
 /** @deprecated Use document-specialist agent instead */
 export { documentSpecialistAgent } from './document-specialist.js';

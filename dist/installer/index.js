@@ -275,6 +275,38 @@ function loadCommandDefinitions() {
     return definitions;
 }
 /**
+ * Load skill definitions from skills subdirectories.
+ * Each skill is a directory containing a SKILL.md file.
+ * Path: /skills/{skill-name}/SKILL.md
+ */
+function loadSkillDefinitions() {
+    const skillsDir = join(getPackageDir(), 'skills');
+    const definitions = [];
+    if (!existsSync(skillsDir)) {
+        // Skills directory is optional
+        return definitions;
+    }
+    try {
+        const entries = readdirSync(skillsDir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (!entry.isDirectory())
+                continue;
+            const skillMdPath = join(skillsDir, entry.name, 'SKILL.md');
+            if (existsSync(skillMdPath)) {
+                const content = readFileSync(skillMdPath, 'utf-8');
+                definitions.push({
+                    name: entry.name,
+                    content
+                });
+            }
+        }
+    }
+    catch {
+        // Return empty array if directory read fails
+    }
+    return definitions;
+}
+/**
  * Load CLAUDE.md content from /docs/CLAUDE.md
  */
 function loadClaudeMdContent() {
@@ -451,8 +483,25 @@ export function install(options = {}) {
                     log(`  Installed ${filename}`);
                 }
             }
-            // NOTE: SKILL_DEFINITIONS removed - skills now only installed via COMMAND_DEFINITIONS
-            // to avoid duplicate entries in Claude Code's available skills list
+            // Install skills from /skills/*/SKILL.md to ~/.claude/skills/
+            log('Installing skill definitions...');
+            const skillDefinitions = loadSkillDefinitions();
+            for (const skill of skillDefinitions) {
+                const skillDir = join(SKILLS_DIR, skill.name);
+                const skillPath = join(skillDir, 'SKILL.md');
+                // Create skill directory if needed
+                if (!existsSync(skillDir)) {
+                    mkdirSync(skillDir, { recursive: true });
+                }
+                if (existsSync(skillPath) && !options.force) {
+                    log(`  Skipping ${skill.name} (already exists)`);
+                }
+                else {
+                    writeFileSync(skillPath, skill.content);
+                    result.installedSkills.push(skill.name);
+                    log(`  Installed ${skill.name}`);
+                }
+            }
             // Install CLAUDE.md with merge support
             const claudeMdPath = join(CLAUDE_CONFIG_DIR, 'CLAUDE.md');
             const homeMdPath = join(homedir(), 'CLAUDE.md');

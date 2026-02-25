@@ -19,6 +19,8 @@ export { executorAgent } from './executor.js';
 export { plannerAgent } from './planner.js';
 export { qaTesterAgent } from './qa-tester.js';
 export { scientistAgent } from './scientist.js';
+export { flutterEngineerAgent } from './flutter-engineer.js';
+export { founderAgent } from './founder.js';
 export { exploreAgent } from './explore.js';
 // Backward compatibility: Deprecated aliases
 /** @deprecated Use document-specialist agent instead */
@@ -36,6 +38,8 @@ import { executorAgent } from './executor.js';
 import { plannerAgent } from './planner.js';
 import { qaTesterAgent } from './qa-tester.js';
 import { scientistAgent } from './scientist.js';
+import { flutterEngineerAgent } from './flutter-engineer.js';
+import { founderAgent } from './founder.js';
 import { exploreAgent } from './explore.js';
 import { documentSpecialistAgent } from './document-specialist.js';
 // Re-export loadAgentPrompt (also exported from index.ts)
@@ -198,6 +202,8 @@ export function getAgentDefinitions(overrides) {
         writer: writerAgent,
         'qa-tester': qaTesterAgent,
         scientist: scientistAgent,
+        'flutter-engineer': flutterEngineerAgent,
+        founder: founderAgent,
         'git-master': gitMasterAgent,
         'code-simplifier': codeSimplifierAgent,
         // ============================================================
