@@ -15,7 +15,9 @@ import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirS
 import { getClaudeConfigDir } from '../utils/paths.js';
 import { join, dirname } from 'path';
 import { execSync } from 'child_process';
+import { createHash } from 'crypto';
 import https from 'https';
+import { validateAnthropicBaseUrl } from '../utils/ssrf-guard.js';
 // Cache configuration
 const CACHE_TTL_SUCCESS_MS = 30 * 1000; // 30 seconds for successful responses
 const CACHE_TTL_FAILURE_MS = 15 * 1000; // 15 seconds for failures
@@ -110,13 +112,26 @@ function isCacheValid(cache) {
     return Date.now() - cache.timestamp < ttl;
 }
 /**
+ * Get the Keychain service name for the current config directory.
+ * Claude Code uses "Claude Code-credentials-{sha256(configDir)[:8]}" for non-default dirs.
+ */
+function getKeychainServiceName() {
+    const configDir = process.env.CLAUDE_CONFIG_DIR;
+    if (configDir) {
+        const hash = createHash('sha256').update(configDir).digest('hex').slice(0, 8);
+        return `Claude Code-credentials-${hash}`;
+    }
+    return 'Claude Code-credentials';
+}
+/**
  * Read OAuth credentials from macOS Keychain
  */
 function readKeychainCredentials() {
     if (process.platform !== 'darwin')
         return null;
     try {
-        const result = execSync('/usr/bin/security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null', { encoding: 'utf-8', timeout: 2000 }).trim();
+        const serviceName = getKeychainServiceName();
+        const result = execSync(`/usr/bin/security find-generic-password -s "${serviceName}" -w 2>/dev/null`, { encoding: 'utf-8', timeout: 2000 }).trim();
         if (!result)
             return null;
         const parsed = JSON.parse(result);
@@ -290,6 +305,13 @@ function fetchUsageFromZai() {
         const baseUrl = process.env.ANTHROPIC_BASE_URL;
         const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
         if (!baseUrl || !authToken) {
+            resolve(null);
+            return;
+        }
+        // Validate baseUrl for SSRF protection
+        const validation = validateAnthropicBaseUrl(baseUrl);
+        if (!validation.allowed) {
+            console.error(`[SSRF Guard] Blocking usage API call: ${validation.reason}`);
             resolve(null);
             return;
         }
@@ -479,10 +501,12 @@ export function parseZaiResponse(response) {
 /**
  * Get usage data (with caching)
  *
- * Returns null if:
- * - No OAuth credentials available (API users)
- * - Credentials expired
- * - API call failed
+ * Returns a UsageResult with:
+ * - rateLimits: RateLimits on success, null on failure/no credentials
+ * - error: categorized reason when API call fails (undefined on success or no credentials)
+ *   - 'network': API call failed (timeout, HTTP error, parse error)
+ *   - 'auth': credentials expired and refresh failed
+ *   - 'no_credentials': no OAuth credentials available (expected for API key users)
  */
 export async function getUsage() {
     const baseUrl = process.env.ANTHROPIC_BASE_URL;
@@ -492,18 +516,18 @@ export async function getUsage() {
     // Check cache first (source must match to avoid cross-provider stale data)
     const cache = readCache();
     if (cache && isCacheValid(cache) && cache.source === currentSource) {
-        return cache.data;
+        return { rateLimits: cache.data, error: cache.error && !cache.data ? 'network' : undefined };
     }
     // z.ai path (must precede OAuth check to avoid stale Anthropic credentials)
     if (isZai && authToken) {
         const response = await fetchUsageFromZai();
         if (!response) {
             writeCache(null, true, 'zai');
-            return null;
+            return { rateLimits: null, error: 'network' };
         }
         const usage = parseZaiResponse(response);
         writeCache(usage, !usage, 'zai');
-        return usage;
+        return { rateLimits: usage };
     }
     // Anthropic OAuth path (official Claude Code support)
     let creds = getCredentials();
@@ -519,13 +543,15 @@ export async function getUsage() {
                     writeBackCredentials(creds);
                 }
                 else {
-                    // Refresh failed - no credentials available
-                    creds = null;
+                    // Refresh failed - auth error
+                    writeCache(null, true, 'anthropic');
+                    return { rateLimits: null, error: 'auth' };
                 }
             }
             else {
-                // No refresh token available
-                creds = null;
+                // No refresh token available - auth error
+                writeCache(null, true, 'anthropic');
+                return { rateLimits: null, error: 'auth' };
             }
         }
         // If we still have valid credentials, use Anthropic OAuth flow
@@ -533,15 +559,15 @@ export async function getUsage() {
             const response = await fetchUsageFromApi(creds.accessToken);
             if (!response) {
                 writeCache(null, true, 'anthropic');
-                return null;
+                return { rateLimits: null, error: 'network' };
             }
             const usage = parseUsageResponse(response);
             writeCache(usage, !usage, 'anthropic');
-            return usage;
+            return { rateLimits: usage };
         }
     }
-    // No credentials available
+    // No credentials available (expected for API key users)
     writeCache(null, true, 'anthropic');
-    return null;
+    return { rateLimits: null, error: 'no_credentials' };
 }
 //# sourceMappingURL=usage-api.js.map

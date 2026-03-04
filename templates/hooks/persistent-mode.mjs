@@ -176,6 +176,41 @@ function isStaleSkillState(state) {
 }
 
 /**
+ * Check if a cancel signal is in progress for the session.
+ * Cancel signals are written by state_clear and expire after 30 seconds.
+ * @param {string} stateDir - The .omc/state directory path
+ * @param {string} sessionId - Optional session ID
+ * @returns {boolean} true if cancel is in progress
+ */
+function isSessionCancelInProgress(stateDir, sessionId) {
+  const CANCEL_SIGNAL_TTL_MS = 30000; // 30 seconds
+
+  // Try session-scoped path first
+  if (sessionId) {
+    const sessionSignalPath = join(stateDir, 'sessions', sessionId, 'cancel-signal-state.json');
+    const signal = readJsonFile(sessionSignalPath);
+    if (signal && signal.expires_at) {
+      const expiresAt = new Date(signal.expires_at).getTime();
+      if (Date.now() < expiresAt) {
+        return true;
+      }
+    }
+  }
+
+  // Fall back to legacy path
+  const legacySignalPath = join(stateDir, 'cancel-signal-state.json');
+  const signal = readJsonFile(legacySignalPath);
+  if (signal && signal.expires_at) {
+    const expiresAt = new Date(signal.expires_at).getTime();
+    if (Date.now() < expiresAt) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Normalize a path for comparison.
  * Uses path.resolve() + path.normalize() for proper handling of:
  * - Trailing slashes
@@ -506,6 +541,12 @@ async function main() {
     const todoCount = countIncompleteTodos(sessionId, directory);
     const totalIncomplete = taskCount + todoCount;
 
+    // Check if cancel is in progress - if so, allow stop immediately
+    if (isSessionCancelInProgress(stateDir, sessionId)) {
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
+      return;
+    }
+
     // Priority 1: Ralph Loop (explicit persistence mode)
     // Skip if state is stale (older than 2 hours) - prevents blocking new sessions
     if (
@@ -535,6 +576,7 @@ async function main() {
 
           console.log(
             JSON.stringify({
+              continue: false,
               decision: "block",
               reason,
             }),
@@ -550,6 +592,7 @@ async function main() {
 
         console.log(
           JSON.stringify({
+            continue: false,
             decision: "block",
             reason: `[RALPH LOOP - EXTENDED] Max iterations reached; extending to ${ralph.state.max_iterations} and continuing. When FULLY complete (after Architect verification), run /oh-my-claudecode:cancel (or --force).`,
           }),
@@ -586,6 +629,7 @@ async function main() {
 
             console.log(
               JSON.stringify({
+                continue: false,
                 decision: "block",
                 reason,
               }),
@@ -626,6 +670,7 @@ async function main() {
 
           console.log(
             JSON.stringify({
+              continue: false,
               decision: "block",
               reason,
             }),
@@ -662,6 +707,7 @@ async function main() {
 
           console.log(
             JSON.stringify({
+              continue: false,
               decision: "block",
               reason,
             }),
@@ -699,6 +745,7 @@ async function main() {
 
           console.log(
             JSON.stringify({
+              continue: false,
               decision: "block",
               reason,
             }),
@@ -737,6 +784,7 @@ async function main() {
 
             console.log(
               JSON.stringify({
+                continue: false,
                 decision: "block",
                 reason,
               }),
@@ -773,6 +821,7 @@ async function main() {
 
         console.log(
           JSON.stringify({
+            continue: false,
             decision: "block",
             reason,
           }),
@@ -830,7 +879,7 @@ async function main() {
         reason = errorGuidance + reason;
       }
 
-      console.log(JSON.stringify({ decision: "block", reason }));
+      console.log(JSON.stringify({ continue: false, decision: "block", reason }));
       return;
     }
 
@@ -868,7 +917,7 @@ async function main() {
             reason = errorGuidance + reason;
           }
 
-          console.log(JSON.stringify({ decision: "block", reason }));
+          console.log(JSON.stringify({ continue: false, decision: "block", reason }));
           return;
         } else {
           // Reinforcement limit reached - clear state and allow stop

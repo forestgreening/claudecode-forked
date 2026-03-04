@@ -151,6 +151,41 @@ function isStaleState(state) {
 }
 
 /**
+ * Check if a cancel signal is in progress for the session.
+ * Cancel signals are written by state_clear and expire after 30 seconds.
+ * @param {string} stateDir - The .omc/state directory path
+ * @param {string} sessionId - Optional session ID
+ * @returns {boolean} true if cancel is in progress
+ */
+function isSessionCancelInProgress(stateDir, sessionId) {
+  const CANCEL_SIGNAL_TTL_MS = 30000; // 30 seconds
+
+  // Try session-scoped path first
+  if (sessionId) {
+    const sessionSignalPath = join(stateDir, 'sessions', sessionId, 'cancel-signal-state.json');
+    const signal = readJsonFile(sessionSignalPath);
+    if (signal && signal.expires_at) {
+      const expiresAt = new Date(signal.expires_at).getTime();
+      if (Date.now() < expiresAt) {
+        return true;
+      }
+    }
+  }
+
+  // Fall back to legacy path
+  const legacySignalPath = join(stateDir, 'cancel-signal-state.json');
+  const signal = readJsonFile(legacySignalPath);
+  if (signal && signal.expires_at) {
+    const expiresAt = new Date(signal.expires_at).getTime();
+    if (Date.now() < expiresAt) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Normalize a path for comparison.
  */
 function normalizePath(p) {
@@ -407,6 +442,7 @@ async function main() {
     const ultraqa = readStateFileWithSession(stateDir, "ultraqa-state.json", sessionId);
     const pipeline = readStateFileWithSession(stateDir, "pipeline-state.json", sessionId);
     const team = readStateFileWithSession(stateDir, "team-state.json", sessionId);
+    const omcTeams = readStateFileWithSession(stateDir, "omc-teams-state.json", sessionId);
 
     // Swarm uses swarm-summary.json (not swarm-state.json) + marker file
     const swarmMarker = existsSync(join(stateDir, "swarm-active.marker"));
@@ -416,6 +452,12 @@ async function main() {
     const taskCount = countIncompleteTasks(sessionId);
     const todoCount = countIncompleteTodos(sessionId, directory);
     const totalIncomplete = taskCount + todoCount;
+
+    // Check if cancel is in progress - if so, allow stop immediately
+    if (isSessionCancelInProgress(stateDir, sessionId)) {
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
+      return;
+    }
 
     // Priority 1: Ralph Loop (explicit persistence mode)
     // Skip if state is stale (older than 2 hours) - prevents blocking new sessions
@@ -542,7 +584,7 @@ async function main() {
       }
     }
 
-    // Priority 6: Team (omc-teams / staged pipeline)
+    // Priority 6: Team (native Claude Code teams)
     if (team.state?.active && !isStaleState(team.state) && isSessionMatch(team.state, sessionId)) {
       const phase = team.state.current_phase || "executing";
       const terminalPhases = ["completed", "complete", "failed", "cancelled"];
@@ -560,6 +602,31 @@ async function main() {
             JSON.stringify({
               decision: "block",
               reason: `[TEAM - Phase: ${phase}] Team mode active. Continue working. When all team tasks complete, run /oh-my-claudecode:cancel to cleanly exit. If cancel fails, retry with /oh-my-claudecode:cancel --force.`,
+            }),
+          );
+          return;
+        }
+      }
+    }
+
+    // Priority 6.5: OMC Teams (tmux CLI workers — independent of native team state)
+    if (omcTeams.state?.active && !isStaleState(omcTeams.state) && isSessionMatch(omcTeams.state, sessionId)) {
+      const phase = omcTeams.state.current_phase || "executing";
+      const terminalPhases = ["completed", "complete", "failed", "cancelled"];
+      if (!terminalPhases.includes(phase)) {
+        const newCount = (omcTeams.state.reinforcement_count || 0) + 1;
+        if (newCount <= 20) {
+          omcTeams.state.reinforcement_count = newCount;
+          omcTeams.state.last_checked_at = new Date().toISOString();
+          writeJsonFile(omcTeams.path, omcTeams.state);
+
+          // Fire-and-forget notification
+          sendStopNotification('omc-teams', omcTeams.state, sessionId, directory).catch(() => {});
+
+          console.log(
+            JSON.stringify({
+              decision: "block",
+              reason: `[OMC TEAMS - Phase: ${phase}] OMC Teams workers active. Continue working. When all workers complete, run /oh-my-claudecode:cancel to cleanly exit. If cancel fails, retry with /oh-my-claudecode:cancel --force.`,
             }),
           );
           return;

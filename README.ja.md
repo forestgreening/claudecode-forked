@@ -8,11 +8,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Sponsor](https://img.shields.io/badge/Sponsor-❤️-red?style=flat&logo=github)](https://github.com/sponsors/Yeachan-Heo)
 
+> **Codex ユーザーの方へ:** [oh-my-codex](https://github.com/Yeachan-Heo/oh-my-codex) をチェックしてください — OpenAI Codex CLI 向けの同じオーケストレーション体験を提供します。
+
 **Claude Code のためのマルチエージェント・オーケストレーション。学習コストゼロ。**
 
 *Claude Code を学ぶ必要はありません。OMC を使うだけ。*
 
-[はじめる](#クイックスタート) • [ドキュメント](https://yeachan-heo.github.io/oh-my-claudecode-website) • [移行ガイド](docs/MIGRATION.md)
+[はじめる](#クイックスタート) • [ドキュメント](https://yeachan-heo.github.io/oh-my-claudecode-website) • [CLI リファレンス](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [ワークフロー](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [移行ガイド](docs/MIGRATION.md)
 
 ---
 
@@ -35,6 +37,16 @@ autopilot: build a REST API for managing tasks
 ```
 
 以上です。あとは自動で進みます。
+
+### 何から始めればいいかわからない？
+
+要件が不明確だったり、漠然としたアイデアしかなかったり、設計を細かくコントロールしたい場合:
+
+```
+/deep-interview "I want to build a task management app"
+```
+
+ディープインタビューはソクラテス式質問法を使い、コードを書く前に思考を明確にします。隠れた前提を明らかにし、加重次元で明確さを測定することで、実行開始前に何を構築すべきかを正確に把握できます。
 
 ## Team モード（推奨）
 
@@ -85,7 +97,7 @@ Codex + Gemini を一つのコマンドで使うには **`/ccg`** スキルを�
 
 ワーカーはオンデマンドで起動し、タスク完了後に終了します — アイドルリソースの無駄なし。`codex` / `gemini` CLI のインストールとアクティブな tmux セッションが必要です。
 
-> **注意: パッケージ名について** — プロジェクトのブランド名は **oh-my-claudecode**（リポジトリ、プラグイン、コマンド）ですが、npmパッケージは [`oh-my-claudecode`](https://www.npmjs.com/package/oh-my-claude-sisyphus) として公開されています。npm/bunでCLIツールをインストールする場合は `npm install -g oh-my-claude-sisyphus` を使用してください。
+> **注意: パッケージ名について** — プロジェクトのブランド名は **oh-my-claudecode**（リポジトリ、プラグイン、コマンド）ですが、npmパッケージは [`oh-my-claude-sisyphus`](https://www.npmjs.com/package/oh-my-claude-sisyphus) として公開されています。npm/bunでCLIツールをインストールする場合は `npm install -g oh-my-claude-sisyphus` を使用してください。
 
 ### アップデート
 
@@ -116,6 +128,7 @@ Codex + Gemini を一つのコマンドで使うには **`/ccg`** スキルを�
 ## なぜ oh-my-claudecode なのか?
 
 - **設定不要** - 賢いデフォルト設定ですぐに使える
+- **Team ファースト・オーケストレーション** - Team が標準マルチエージェントサーフェス（swarm/ultrapilot は互換性ファサード）
 - **自然言語インターフェース** - コマンドを覚える必要なし、やりたいことを話すだけ
 - **自動並列化** - 複雑なタスクを専門エージェントに自動分散
 - **粘り強い実行** - 検証完了まで諦めない
@@ -172,10 +185,13 @@ Codex + Gemini を一つのコマンドで使うには **`/ccg`** スキルを�
 | `ulw` | 最大並列化 | `ulw fix all errors` |
 | `plan` | 計画インタビュー | `plan the API` |
 | `ralplan` | 反復的計画合意形成 | `ralplan this feature` |
-| `swarm` | レガシーキーワード（Team にルーティング） | `swarm 5 agents: fix lint errors` |
-| `ultrapilot` | レガシーキーワード（Team にルーティング） | `ultrapilot: build a fullstack app` |
+| `deep-interview` | ソクラテス式の要件明確化 | `deep-interview "vague idea"` |
+| `swarm` | **非推奨** — 代わりに `team` を使用 | `swarm 5 agents: fix lint errors` |
+| `ultrapilot` | **非推奨** — 代わりに `team` を使用 | `ultrapilot: build a fullstack app` |
 
-**ralph は ultrawork を含む:** ralph モードを有効にすると、ultrawork の並列実行が自動的に含まれます。キーワードを組み合わせる必要はありません。
+**注意:**
+- **ralph は ultrawork を含む:** ralph モードを有効にすると、ultrawork の並列実行が自動的に含まれます。キーワードを組み合わせる必要はありません。
+- `swarm N agents` 構文はエージェント数抽出のために引き続き認識されますが、v4.1.7+ ではランタイムは Team ベースです。
 
 ---
 
@@ -217,47 +233,17 @@ omc config-stop-callback discord --clear-tags
 
 ---
 
-## 通知 (Notifications)
-
-セッションのライフサイクルイベントに対してリアルタイム通知を受け取れます。
-
-対象イベント:
-- `session-start`
-- `session-stop`（persistent モードが待機/ブロック状態に入ったとき）
-- `session-end`
-- `ask-user-question`
-
-### 設定
-シェルプロファイル（例: `~/.zshrc`, `~/.bashrc`）に環境変数を追加してください:
-
-```bash
-# Discord Bot
-export OMC_DISCORD_NOTIFIER_BOT_TOKEN="your_bot_token"
-export OMC_DISCORD_NOTIFIER_CHANNEL="your_channel_id"
-
-# Telegram
-export OMC_TELEGRAM_BOT_TOKEN="your_bot_token"
-export OMC_TELEGRAM_CHAT_ID="your_chat_id"
-
-# Slack
-export OMC_SLACK_WEBHOOK_URL="your_webhook_url"
-export OMC_SLACK_MENTION="<@U1234567890>"  # optional
-
-# Optional webhooks
-export OMC_DISCORD_WEBHOOK_URL="your_webhook_url"
-```
-
-> 注意: `claude` を実行する同じシェルで環境変数が読み込まれている必要があります。
-
----
-
 ## ドキュメント
 
 - **[完全リファレンス](docs/REFERENCE.md)** - 全機能の詳細ドキュメント
-- **[パフォーマンス監視](docs/PERFORMANCE-MONITORING.md)** - エージェント追跡、デバッグ、最適化
+- **[CLI リファレンス](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference)** - すべての `omc` コマンド、フラグ、ツール
+- **[通知ガイド](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#notifications)** - Discord、Telegram、Slack、webhook のセットアップ
+- **[推奨ワークフロー](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows)** - 一般的なタスクのための実績あるスキルチェーン
+- **[リリースノート](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#release-notes)** - 各バージョンの新機能
 - **[ウェブサイト](https://yeachan-heo.github.io/oh-my-claudecode-website)** - インタラクティブガイドと例
 - **[移行ガイド](docs/MIGRATION.md)** - v2.x からのアップグレード
 - **[アーキテクチャ](docs/ARCHITECTURE.md)** - 内部の仕組み
+- **[パフォーマンス監視](docs/PERFORMANCE-MONITORING.md)** - エージェント追跡、デバッグ、最適化
 
 ---
 
@@ -287,7 +273,7 @@ MIT
 
 <div align="center">
 
-**インスピレーション元:** [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) • [claude-hud](https://github.com/ryanjoachim/claude-hud) • [Superpowers](https://github.com/NexTechFusion/Superpowers) • [everything-claude-code](https://github.com/affaan-m/everything-claude-code)
+**インスピレーション元:** [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) • [claude-hud](https://github.com/ryanjoachim/claude-hud) • [Superpowers](https://github.com/obra/superpowers) • [everything-claude-code](https://github.com/affaan-m/everything-claude-code) • [Ouroboros](https://github.com/Q00/ouroboros)
 
 **学習コストゼロ。最大パワー。**
 

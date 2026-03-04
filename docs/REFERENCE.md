@@ -8,8 +8,9 @@ Complete reference for oh-my-claudecode. For quick start, see the main [README.m
 
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [MCP Team Runtime Tools](#mcp-team-runtime-tools)
 - [Agents (28 Total)](#agents-28-total)
-- [Skills (37 Total)](#skills-37-total)
+- [Skills (38 Total)](#skills-38-total)
 - [Slash Commands](#slash-commands)
 - [Hooks System](#hooks-system)
 - [Magic Keywords](#magic-keywords)
@@ -101,6 +102,7 @@ If both configurations exist, **project-scoped takes precedence** over global:
 | `OMC_PARALLEL_EXECUTION` | `true` | Enable/disable parallel agent execution |
 | `OMC_CODEX_DEFAULT_MODEL` | _(provider default)_ | Default model for Codex CLI workers |
 | `OMC_GEMINI_DEFAULT_MODEL` | _(provider default)_ | Default model for Gemini CLI workers |
+| `OMC_LSP_TIMEOUT_MS` | `15000` | Timeout (ms) for LSP requests. Increase for large repos or slow language servers |
 | `DISABLE_OMC` | _(unset)_ | Set to any value to disable all OMC hooks |
 | `OMC_SKIP_HOOKS` | _(unset)_ | Comma-separated list of hook names to skip |
 
@@ -185,6 +187,23 @@ Tag behavior:
 
 ---
 
+## MCP Team Runtime Tools
+
+When using the Team MCP server (`bridge/team-mcp.cjs`), these tools are available:
+
+| Tool | Purpose |
+|------|---------|
+| `omc_run_team_start` | Start tmux workers in background and return `jobId` immediately |
+| `omc_run_team_status` | Non-blocking status check for a background team job |
+| `omc_run_team_wait` | Blocking wait with internal polling, backoff, and idle nudge support |
+| `omc_run_team_cleanup` | Explicitly stop worker panes and clear scoped team state directory |
+
+### Runtime status semantics
+
+- **Artifact-first terminal convergence**: `status` and `wait` prefer `{jobId}-result.json` when present.
+- **Deterministic parse-failure handling**: malformed result artifacts are treated as terminal `failed`.
+- **Cleanup scope**: cleanup clears only `.omc/state/team/{teamName}` for the job (never sibling teams).
+
 ## Agents (28 Total)
 
 Always use `oh-my-claudecode:` prefix when calling via Task tool.
@@ -245,7 +264,7 @@ Always use `oh-my-claudecode:` prefix when calling via Task tool.
 
 ---
 
-## Skills (37 Total)
+## Skills (38 Total)
 
 ### Core Skills
 
@@ -254,15 +273,15 @@ Always use `oh-my-claudecode:` prefix when calling via Task tool.
 | `orchestrate` | Multi-agent orchestration mode | - |
 | `autopilot` | Full autonomous execution from idea to working code | `/oh-my-claudecode:autopilot` |
 | `ultrawork` | Maximum performance with parallel agents | `/oh-my-claudecode:ultrawork` |
-| `ultrapilot` | Parallel autopilot with 3-5x speedup | `/oh-my-claudecode:ultrapilot` |
+| `ultrapilot` | **Deprecated** — use `autopilot` or `team` instead | `/oh-my-claudecode:ultrapilot` |
 | `team` | N coordinated agents on shared task list using native teams | `/oh-my-claudecode:team` |
-| `swarm` | **Deprecated** compatibility facade over team orchestration (use `team`) | `/oh-my-claudecode:swarm` |
-| `pipeline` | Sequential agent chaining | `/oh-my-claudecode:pipeline` |
+| `pipeline` | **Deprecated** — use `autopilot` instead | `/oh-my-claudecode:pipeline` |
 | `ralph` | Self-referential development until completion | `/oh-my-claudecode:ralph` |
 | `ralph-init` | Initialize PRD for structured task tracking | `/oh-my-claudecode:ralph-init` |
 | `ultraqa` | Autonomous QA cycling workflow | `/oh-my-claudecode:ultraqa` |
 | `plan` | Start planning session (consensus mode uses RALPLAN-DR structured deliberation) | `/oh-my-claudecode:plan` |
 | `ralplan` | Iterative planning (Planner+Architect+Critic) with structured deliberation; short mode default, `--deliberate` for high-risk pre-mortem + expanded test plan | `/oh-my-claudecode:ralplan` |
+| `deep-interview` | Socratic deep interview with mathematical ambiguity gating (Ouroboros-inspired) | `/oh-my-claudecode:deep-interview` |
 | `review` | Review work plans with critic | `/oh-my-claudecode:review` |
 
 ### Enhancement Skills
@@ -309,15 +328,15 @@ All skills are available as slash commands with the prefix `/oh-my-claudecode:`.
 | `/oh-my-claudecode:orchestrate <task>` | Activate multi-agent orchestration mode |
 | `/oh-my-claudecode:autopilot <task>` | Full autonomous execution |
 | `/oh-my-claudecode:ultrawork <task>` | Maximum performance mode with parallel agents |
-| `/oh-my-claudecode:ultrapilot <task>` | Parallel autopilot (3-5x faster) |
+| `/oh-my-claudecode:ultrapilot <task>` | **Deprecated** — redirects to `autopilot` or `team` |
 | `/oh-my-claudecode:team <N>:<agent> <task>` | Coordinated native team workflow |
-| `/oh-my-claudecode:swarm <N>:<agent> <task>` | Deprecated alias for Team orchestration |
-| `/oh-my-claudecode:pipeline <stages>` | Sequential agent chaining |
+| `/oh-my-claudecode:pipeline <stages>` | **Deprecated** — redirects to `autopilot` |
 | `/oh-my-claudecode:ralph-init <task>` | Initialize PRD for structured task tracking |
 | `/oh-my-claudecode:ralph <task>` | Self-referential loop until task completion |
 | `/oh-my-claudecode:ultraqa <goal>` | Autonomous QA cycling workflow |
 | `/oh-my-claudecode:plan <description>` | Start planning session (supports consensus structured deliberation) |
 | `/oh-my-claudecode:ralplan <description>` | Iterative planning with consensus structured deliberation (`--deliberate` for high-risk mode) |
+| `/oh-my-claudecode:deep-interview <idea>` | Socratic interview with ambiguity scoring before execution |
 | `/oh-my-claudecode:review [plan-path]` | Review a plan with critic |
 | `/oh-my-claudecode:deepsearch <query>` | Thorough multi-strategy codebase search |
 | `/oh-my-claudecode:deepinit [path]` | Index codebase with hierarchical AGENTS.md files |
@@ -348,10 +367,8 @@ Oh-my-claudecode includes 31 lifecycle hooks that enhance Claude Code's behavior
 | `autopilot` | Full autonomous execution from idea to working code |
 | `ultrawork` | Maximum parallel agent execution |
 | `ralph` | Persistence until verified complete |
-| `ultrapilot` | Parallel autopilot with file ownership |
 | `team-pipeline` | Native team staged pipeline orchestration |
 | `ultraqa` | QA cycling until goal met |
-| `swarm` | Coordinated multi-agent with SQLite task claiming |
 | `mode-registry` | Tracks active execution mode state (including team/ralph/ultrawork/ralplan) |
 | `persistent-mode` | Maintains mode state across sessions |
 
@@ -448,16 +465,14 @@ Just include these words anywhere in your prompt to activate enhanced modes:
 | `ultrawork`, `ulw`, `uw` | Activates parallel agent orchestration |
 | `eco`, `efficient`, `save-tokens`, `budget` | Token-efficient parallel execution |
 | `autopilot`, `build me`, `I want a` | Full autonomous execution |
-| `ultrapilot`, `parallel build`, `swarm build` | Parallel autopilot (3-5x faster) |
 | `ralph`, `don't stop`, `must complete` | Persistence until verified complete |
 | `plan this`, `plan the` | Planning interview workflow |
 | `ralplan` | Iterative planning consensus with structured deliberation (`--deliberate` for high-risk mode) |
+| `deep interview`, `ouroboros` | Deep Socratic interview with mathematical clarity gating |
 | `search`, `find`, `locate` | Enhanced search mode |
 | `analyze`, `investigate`, `debug` | Deep analysis mode |
 | `sciomc` | Parallel research orchestration |
 | `tdd`, `test first`, `red green` | TDD workflow enforcement |
-| `swarm N agents` | Coordinated agent swarm |
-| `pipeline`, `chain agents` | Sequential agent chaining |
 | `stop`, `cancel`, `abort` | Unified cancellation |
 
 ### Examples
@@ -480,8 +495,8 @@ analyze why the tests are failing
 # Autonomous execution
 autopilot: build a todo app with React
 
-# Parallel autopilot
-ultrapilot: build a fullstack todo app
+# Parallel autonomous execution (use team instead of deprecated ultrapilot)
+team 3:deep-executor "build a fullstack todo app"
 
 # Persistence mode
 ralph: refactor the authentication module
@@ -492,11 +507,8 @@ plan this feature
 # TDD workflow
 tdd: implement password validation
 
-# Coordinated swarm
-swarm 5 agents: fix all lint errors
-
-# Agent chaining
-pipeline: analyze → fix → test this bug
+# Coordinated team agents
+team 5:executor fix all lint errors
 ```
 
 ---

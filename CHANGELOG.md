@@ -1,3 +1,283 @@
+# oh-my-claudecode v4.6.7: Bundled Path Resolution & Daemon Startup Fixes
+
+## Release Notes
+
+Patch release focused on bundled CJS runtime stability and daemon startup correctness.
+
+### Bug Fixes
+
+- **Bundled package-dir resolution**: Hardened `getPackageDir()` logic in agent prompt loaders to correctly resolve package root in bundled CJS runtime while preserving source/dist behavior.
+  - Updated `src/agents/utils.ts`
+  - Updated `src/agents/prompt-helpers.ts`
+  - Fixes #1322 and #1324
+
+- **Wait daemon bootstrap module path**: Fixed daemon child-process import path resolution so bundled `bridge/cli.cjs` launches the correct dist module instead of recursively importing CLI entry.
+  - Updated `src/features/rate-limit-wait/daemon.ts`
+  - Added shared resolver `src/utils/daemon-module-path.ts`
+  - Added regression tests in `src/__tests__/daemon-module-path.test.ts`
+  - Fixes #1323
+
+- **Reply listener daemon bootstrap module path**: Applied the same bundled module path fix to reply listener daemon startup.
+  - Updated `src/notifications/reply-listener.ts`
+
+- **Regression coverage**:
+  - Added `src/__tests__/package-dir-resolution-regression.test.ts`
+  - Regenerated bridge/dist artifacts
+
+---
+
+# oh-my-claudecode v4.6.5: Remove jsonc-parser Dependency
+
+## Release Notes
+
+Removed external `jsonc-parser` dependency by implementing a lightweight JSONC parser internally.
+
+### Bug Fixes
+
+- **Bundle jsonc-parser**: Replaced external `jsonc-parser` dependency with a custom implementation.
+  - Created `src/utils/jsonc.ts` with `parseJsonc()` and `stripJsoncComments()` functions
+  - Updated `src/config/loader.ts` to use the internal parser
+  - Removed `jsonc-parser` from external dependencies in `build-runtime-cli.mjs`
+  - Fixes #1316: `runtime-cli.cjs` failing with "Cannot find module 'jsonc-parser'" in plugin marketplace installs
+
+---
+
+# oh-my-claudecode v4.6.4: ESM/CJS Path Resolution Hotfix
+
+## Release Notes
+
+Hotfix for `getPackageDir()` path resolution in bundled CJS builds. Fixes the `import.meta?.url` check that was incorrectly transformed by esbuild.
+
+### Bug Fixes
+
+- **CJS Bundle Path Resolution**: Fixed `getPackageDir()` functions in multiple files to properly detect CJS bundle context.
+  - Reordered checks to prioritize `__dirname` (available in CJS) over `import.meta.url` (ESM)
+  - Fixed files: `src/agents/prompt-helpers.ts`, `src/agents/utils.ts`, `src/installer/index.ts`, `src/installer/hooks.ts`
+  - Fixed `src/hooks/bridge.ts` `isMainModule()` check to handle both ESM and CJS contexts
+  - Resolves #1314: `omc update` failing with `TypeError [ERR_INVALID_ARG_TYPE]`
+
+---
+
+# oh-my-claudecode v4.6.3: CLI import.meta.url Fix
+
+## Release Notes
+
+Critical hotfix for CLI runtime error caused by `import.meta.url` being undefined in CJS bundle.
+
+### Bug Fixes
+
+- **CLI Runtime Fix**: Fixed `fileURLToPath` error by injecting `import.meta.url` polyfill in CJS build.
+  - Added banner injection in `scripts/build-cli.mjs` to define `importMetaUrl` before bundle
+  - Used esbuild `define` to replace `import.meta.url` with the polyfill
+  - Fixes `TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string` when running `omc` CLI
+
+---
+
+# oh-my-claudecode v4.6.2: CLI Shebang Hotfix
+
+## Release Notes
+
+Hotfix release to resolve duplicate shebang issue in published v4.6.1 package.
+
+### Bug Fixes
+
+- **CLI Shebang Fix** (#1309): Removed duplicate shebang from `bridge/cli.cjs` build output.
+
+---
+
+# oh-my-claudecode v4.6.1: Security Hardening, Team Reliability & HUD Improvements
+
+## Release Notes
+
+This patch release delivers critical security fixes for SSRF and shell injection vulnerabilities, alongside team runtime stability improvements and HUD configurability enhancements. Version bumped from 4.6.0 to 4.6.1.
+
+### New Features
+
+- **Configurable Git Info Position** (#047d5638): HUD now supports `gitInfoPosition` config to display git information above or below the main panel.
+- **Harsh-Critic Opt-in** (#9f52cd1a): The harsh-critic agent is now opt-in via `features.harshCritic` configuration flag.
+
+### Security Fixes
+
+- **SSRF Protection** (#1304): Added SSRF protection for `ANTHROPIC_BASE_URL` to prevent unauthorized outbound requests.
+- **Shell Injection Prevention** (#9675babb): Validated model name and provider in `spawnCliProcess` to prevent shell injection attacks.
+- **Config Injection Fixes** (#0b2e0542): Hardened against shell and configuration injection vulnerabilities.
+
+### Bug Fixes
+
+- **Persistent Mode Cancel Signal** (#1306): Fixed cancel signal check before blocking stop hook.
+- **HUD Async I/O** (#1305): Converted file I/O to async to prevent event loop blocking.
+- **CLI Model Passthrough**: Fixed CLI worker model parameter passing in `omc-teams`.
+- **CLI Bundle** (#9d713bc4): Bundled CLI entry point to eliminate node_modules dependency.
+- **Memory Leak Prevention** (#bfd726cb): Added max-size caps to unbounded Maps and caches.
+- **Benchmark Hardening** (#469f914a): Hardened benchmark parser and calibrated keyword matching.
+- **Benchmark Retry Logic** (#3d6f56f7): Added retry with exponential backoff for API overload errors.
+
+---
+
+# oh-my-claudecode v4.6.0: Team Runtime Hardening, Security Fixes & PRD-Driven Ralph
+
+## Release Notes
+
+This release delivers 48 commits of team runtime stability improvements, security hardening, and new features including mandatory PRD mode for Ralph, a new deep-interview skill, and comprehensive team worker reliability enhancements. Version bumped from 4.5.3 to 4.6.0.
+
+### New Features
+
+- **Deep Interview Skill** (#1215): [Ouroboros](https://github.com/Q00/ouroboros)-inspired Socratic questioning skill for requirements elicitation and problem decomposition.
+- **Ralph PRD Mode Mandatory** (#1219): Ralph now auto-generates `prd.json` when none exists, making PRD-driven iteration the default behavior. Stories iterate until all acceptance criteria pass. Opt-out via `--no-prd`.
+- **Factcheck Sentinel Readiness Gate** (#1210): Wired factcheck sentinel readiness gate into team pipeline for improved verification reliability.
+- **Model Aliases Configuration** (#1211, #1213): Added `modelAliases` config to override agent definition defaults for flexible model routing.
+
+### Security Fixes
+
+- **CLI Path Trust & RC-Loading** (#1230): Tightened CLI path trust validation and restored explicit RC-loading opt-out via `OMC_TEAM_NO_RC` for team worker runtime hardening. Pinned validated absolute CLI binary paths across preflight/spawn.
+- **Binary Path Validation** (#1228): Hardened CLI binary validation and launch safety with proper `normalize` imports for binary path compatibility checks.
+
+### Team Runtime Fixes
+
+- **Transient Failure Retry** (#1209, #1243): Added retry logic for dead worker panes with proper failure retry accounting atomicity. Skip `done.json` retry backoff on `ENOENT` errors.
+- **Watchdog Improvements** (#1234, #1229): Restored `done.json` parse recovery in watchdog path and retry pending-task read on transient gaps.
+- **Startup Reliability** (#1228): Restored readiness-based startup for non-prompt workers and preserved team context on pane-ready rollback.
+- **Binary Path Handling** (#1236): Allow absolute `launchBinary` paths containing spaces.
+- **Leader Pane Stability** (#1205): Prevent leader pane crash when `omc-teams` workers are active.
+- **Artifact Convergence** (#1241): Prevent wait hang in team MCP via artifact convergence.
+
+### Bug Fixes
+
+- **Python REPL Orphan Process** (#1239): Resolved orphan process leak on Windows caused by inline `require` in `killProcessGroup`.
+- **Shell RC Sourcing** (#1207): Source shell RC files when launching tmux sessions for proper environment inheritance.
+- **Stop Hook Blocking** (#1216): Return `continue: false` when stop hook should block execution.
+- **State Mode Alignment** (#1233, #1235): Aligned deep-interview state mode with state tools enum.
+
+### Cleanup & Refactoring
+
+- **Dead Code Removal** (#1220): Removed deprecated agents/skills, synchronized PluginConfig, renamed `plan` to `omc-plan` for consistency.
+
+### Testing
+
+- **Watchdog Retry Tests**: Hardened test suite for watchdog retry functionality with deterministic wait helpers.
+- **Runtime CLI Tests**: Added comprehensive CLI path resolution and prompt-mode test coverage.
+- **Done Recovery Tests**: Added tests for `done.json` recovery scenarios.
+
+### Documentation
+
+- **Execution Mode Guide** (#1221, #1222): Updated mode selection guide to recommend Team mode first.
+- **Skill Documentation**: Updated all skill READMEs to reflect new naming and capabilities.
+
+---
+
+# oh-my-claudecode v4.5.3: Dev→Main Release Alignment & OMC Teams Shipping
+
+## Patch Notes
+
+This release formalizes the dev→main shipping workflow for OMC releases, bumps plugin/package metadata to 4.5.3, and validates release readiness with smoke and e2e-oriented test runs after loading the dev plugin in-session.
+
+### Release Process
+
+- **Dev→Main shipping flow**: release notes now explicitly capture dev as the integration branch and main as the shipping branch for final release publication.
+- **Version bump to 4.5.3**: updated package and plugin metadata to keep runtime, plugin manifest, marketplace metadata, and docs version markers aligned.
+
+### OMC Teams
+
+- **Ship `/omc-teams` with Codex workers**: release flow includes Codex-worker parallel review/validation as part of release readiness checks.
+
+### Verification
+
+- **Smoke test run**: execute smoke-focused Vitest suites before release.
+- **E2E test run**: execute e2e-scoped test selection (or explicit no-test result) as part of release gate.
+
+---
+
+# oh-my-claudecode v4.5.2: Security Hardening, Shared Memory Reliability & Team Stability
+
+## Patch Notes
+
+Major reliability and security release with 59 commits. Addresses critical data-integrity issues in shared memory (atomic writes, file locking, TOCTOU prevention), hardens team worker coordination (path traversal validation, shell sandboxing, binary validation), adds notification security (token redaction, input sanitization, WebSocket message validation), and introduces new features including Slack Bot Socket Mode, cross-session memory sync, factcheck guards, configurable pipeline orchestrator, and non-Claude provider auto-detection.
+
+### Features
+
+- **Slack Bot Socket Mode** (#1138, #1139): Bidirectional replay injection via WebSocket for real-time Slack integration.
+- **Cross-session memory sync** (#1137): Shared memory subsystem for multi-agent handoffs across sessions.
+- **Factcheck guard + sentinel health analyzer** (#1155, #1156): Portable factcheck guard with sentinel health monitoring.
+- **Configurable pipeline orchestrator** (#1132): Phase 1 & 2 of autopilot pipeline orchestrator with configurable stages.
+- **API key source indicator** (#1146, #1147): HUD element showing the source of the active API key.
+- **OMC-OMX cross-platform worker adapter** (#1117, #1123): Interop adapter for cross-platform worker orchestration.
+- **OpenClaw channel context** (#1110, #1115): Originating channel context passed through to webhook hooks.
+- **forceInherit model routing** (#1135, #1136): Option to bypass model routing and inherit parent model.
+- **Non-Claude provider auto-detection** (#1201, #1202): Auto-detect non-Claude providers (OpenRouter, Bedrock, etc.) and enable forceInherit.
+- **LSP timeout configuration** (#1106): Configurable request timeout via `OMC_LSP_TIMEOUT_MS` env var.
+- **HUD maxWidth config** (#1102): Statusline truncation with configurable max width.
+- **Worktree path in tmux session name** (#1088, #1089): Include worktree path for disambiguating parallel sessions.
+
+### Security Fixes
+
+- **Path traversal prevention in worker inbox/outbox** (#1185): Validate file paths to prevent directory traversal attacks in team worker message exchange.
+- **Shell rc sandboxing and binary validation** (#1166, #1189): Sandbox shell rc loading and validate binary paths before execution in team workers.
+- **CLI binary resolution hardening** (#1173, #1190): Prevent PATH manipulation from influencing CLI binary resolution.
+- **Slack/Telegram token redaction** (#1176): Redact bot tokens in log and error output paths.
+- **Slack webhook input sanitization** (#1175): Sanitize input data in Slack webhook payloads.
+- **Slack WebSocket message validation** (#1188): Validate WebSocket messages before session injection.
+
+### Bug Fixes — Shared Memory & State
+
+- **Deep merge for cross-session sync** (#1193): Use deep merge instead of full overwrite to prevent data loss during sync.
+- **Payload size validation** (#1181): Validate memory write payloads to prevent oversized writes.
+- **TOCTOU cache poisoning prevention** (#1179): Add locking to state-manager `update()` to prevent time-of-check/time-of-use races.
+- **Atomic writes** (#1174): Write to temp file + rename to prevent corruption on crash.
+- **Cross-process file locking** (#1178): File locking to prevent concurrent write data loss.
+- **Mode state I/O consolidation** (#1143): Consolidate mode state I/O and fix cancel cleanup.
+- **OMC_STATE_DIR support** (#1127): Use `getOmcRoot()` in HUD and hooks to respect `OMC_STATE_DIR`.
+
+### Bug Fixes — Team & Workers
+
+- **Tmux layout debounce** (#1158, #1196): Debounce layout operations during rapid worker spawn/kill cycles.
+- **Shell-readiness configurable timeout** (#1171, #1192): Add configurable timeout to shell-readiness wait.
+- **Readiness race condition** (#1183): Close race between pane check and task delivery.
+- **Interop bootstrap fail-open warning** (#1164, #1182): Add visible warning log when interop bootstrap fails open.
+- **Worker spawn env hardening** (#1141): Harden worker spawn environment and interop bootstrap fail-open.
+- **Inline worker task sentinels** (#1151, #1152): Include `.ready`/`done.json` sentinel in inline worker task.
+- **Prompt-mode gitignore bypass** (#1148, #1150): Inline task content for prompt-mode workers to bypass gitignore.
+- **PromptMode shell-readiness wait** (#1144, #1145): Add shell-readiness wait for promptMode agent panes.
+- **Shell PATH resolution** (#1128): Resolve user's shell PATH for CLI detection and runtime spawn.
+- **Gemini CLI worker fixes** (#1105): Resolve 4 Gemini CLI worker bugs.
+- **Auto-create detached tmux session** (#1095): Auto-create detached tmux session when not inside tmux.
+
+### Bug Fixes — Notifications
+
+- **WebSocket cleanup gaps** (#1172, #1194): Close WebSocket cleanup gaps on disconnect.
+- **Telegram reply injection** (#1099): Fix 3 reply listener bugs preventing Telegram reply injection.
+
+### Bug Fixes — Hooks, CLI & Shell
+
+- **Transcript path in native git worktrees** (#1191, #1195): Resolve transcript path correctly in native git worktrees.
+- **Worktree-mismatched transcript paths** (#1098): Resolve worktree-mismatched transcript paths.
+- **Shell rc in tmux sessions** (#1153, #1154): Load default shell rc in OMC tmux shell sessions.
+- **Source shell rc in tmux launch** (Yeachan-Heo/fix/tmux-shell-rc-loading): Source shell rc files in tmux launch sessions.
+- **Forward OMC_* env vars** (#1093): Forward OMC_* environment variables to tmux sessions.
+
+### Bug Fixes — Other
+
+- **HUD worktree root resolution** (#1118, #1121): Resolve worktree root to prevent `.omc/` in subdirectories.
+- **CLAUDE_CONFIG_DIR support** (#1125): Support `CLAUDE_CONFIG_DIR` in HUD Keychain credential lookup.
+- **OpenClaw claude -p mode** (#1120, #1122): Stop and session-end hooks fire reliably in `claude -p` mode.
+- **Plugin setup runtime deps** (#1113, #1114): Install runtime deps in plugin cache, remove prepare trap.
+- **Skill name prefixing** (#1111): Prefix plan, review, security-review skill names with omc-.
+- **Windows TCP fallback** (#1112): Add TCP localhost fallback for bridge when AF_UNIX unavailable.
+- **omc-doctor false positives** (#1101, #1104): Resolve false-positive checks for CLAUDE.md and legacy skills.
+
+### Chore & Refactor
+
+- **Deprecate legacy execution modes** (#1131, #1134): Deprecate ultrapilot, swarm, and pipeline execution modes.
+- **CLAUDE.md diet** — Reduce from 288 to 162 lines (-44%).
+- **i18n README fix** (#1096): Fix npm package name in translated READMEs.
+
+### Tests
+
+- **Edge/smoke test suites** (#1157): Add edge/smoke test suites for main→dev feature coverage.
+- **Smoke and unit tests** (#1140): Add smoke and unit tests for changelog features.
+- **CI test fixes** (#1197, #1198, #1199): Fix slack-socket, project-memory-merge, runtime-interop, runtime-prompt-mode, and memory-tools payload test failures.
+
+---
+
 # oh-my-claudecode v4.5.1: OpenClaw CLI Command Gateway
 
 ## Patch Notes
