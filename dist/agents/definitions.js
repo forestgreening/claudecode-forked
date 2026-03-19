@@ -8,8 +8,8 @@
  * 4. omcSystemPrompt for the main orchestrator
  */
 import { loadAgentPrompt, parseDisallowedTools } from './utils.js';
+import { loadConfig } from '../config/loader.js';
 // Re-export base agents from individual files (rebranded names)
-export { deepExecutorAgent } from './deep-executor.js';
 export { architectAgent } from './architect.js';
 export { designerAgent } from './designer.js';
 export { writerAgent } from './writer.js';
@@ -22,10 +22,9 @@ export { scientistAgent } from './scientist.js';
 export { flutterEngineerAgent } from './flutter-engineer.js';
 export { founderAgent } from './founder.js';
 export { exploreAgent } from './explore.js';
+export { tracerAgent } from './tracer.js';
 export { documentSpecialistAgent } from './document-specialist.js';
-export { harshCriticAgent } from './harsh-critic.js';
 // Import base agents for use in getAgentDefinitions
-import { deepExecutorAgent } from './deep-executor.js';
 import { architectAgent } from './architect.js';
 import { designerAgent } from './designer.js';
 import { writerAgent } from './writer.js';
@@ -38,8 +37,8 @@ import { scientistAgent } from './scientist.js';
 import { flutterEngineerAgent } from './flutter-engineer.js';
 import { founderAgent } from './founder.js';
 import { exploreAgent } from './explore.js';
+import { tracerAgent } from './tracer.js';
 import { documentSpecialistAgent } from './document-specialist.js';
-import { harshCriticAgent } from './harsh-critic.js';
 // Re-export loadAgentPrompt (also exported from index.ts)
 export { loadAgentPrompt };
 // ============================================================
@@ -68,16 +67,6 @@ export const verifierAgent = {
 // ============================================================
 // REFORMED AGENTS (REVIEW LANE)
 // ============================================================
-/**
- * Quality-Reviewer Agent - Logic Defects & Maintainability (Sonnet)
- */
-export const qualityReviewerAgent = {
-    name: 'quality-reviewer',
-    description: 'Logic defects, maintainability, anti-patterns (Sonnet).',
-    prompt: loadAgentPrompt('quality-reviewer'),
-    model: 'sonnet',
-    defaultModel: 'sonnet'
-};
 // ============================================================
 // REFORMED AGENTS (DOMAIN SPECIALISTS)
 // ============================================================
@@ -102,16 +91,6 @@ export const securityReviewerAgent = {
     name: 'security-reviewer',
     description: 'Security vulnerability detection specialist (Sonnet). Use for security audits and OWASP detection.',
     prompt: loadAgentPrompt('security-reviewer'),
-    model: 'sonnet',
-    defaultModel: 'sonnet'
-};
-/**
- * Build-Fixer Agent - Build Error Resolution (Sonnet)
- */
-export const buildFixerAgent = {
-    name: 'build-fixer',
-    description: 'Build and compilation error resolution specialist (Sonnet). Use for fixing build/type errors in any language.',
-    prompt: loadAgentPrompt('build-fixer'),
     model: 'sonnet',
     defaultModel: 'sonnet'
 };
@@ -152,6 +131,31 @@ export const codeSimplifierAgent = {
  * @deprecated Use test-engineer agent instead
  */
 export const tddGuideAgentAlias = testEngineerAgent;
+const AGENT_CONFIG_KEY_MAP = {
+    explore: 'explore',
+    analyst: 'analyst',
+    planner: 'planner',
+    architect: 'architect',
+    debugger: 'debugger',
+    executor: 'executor',
+    verifier: 'verifier',
+    'security-reviewer': 'securityReviewer',
+    'code-reviewer': 'codeReviewer',
+    'test-engineer': 'testEngineer',
+    designer: 'designer',
+    writer: 'writer',
+    'qa-tester': 'qaTester',
+    scientist: 'scientist',
+    tracer: 'tracer',
+    'git-master': 'gitMaster',
+    'code-simplifier': 'codeSimplifier',
+    critic: 'critic',
+    'document-specialist': 'documentSpecialist',
+};
+function getConfiguredAgentModel(name, config) {
+    const key = AGENT_CONFIG_KEY_MAP[name];
+    return key ? config.agents?.[key]?.model : undefined;
+}
 // ============================================================
 // AGENT REGISTRY
 // ============================================================
@@ -187,21 +191,19 @@ export function getAgentDefinitions(options) {
         // ============================================================
         // REVIEW LANE
         // ============================================================
-        'quality-reviewer': qualityReviewerAgent,
         'security-reviewer': securityReviewerAgent,
         'code-reviewer': codeReviewerAgent,
         // ============================================================
         // DOMAIN SPECIALISTS
         // ============================================================
-        'deep-executor': deepExecutorAgent,
         'test-engineer': testEngineerAgent,
-        'build-fixer': buildFixerAgent,
         designer: designerAgent,
         writer: writerAgent,
         'qa-tester': qaTesterAgent,
         scientist: scientistAgent,
         'flutter-engineer': flutterEngineerAgent,
         founder: founderAgent,
+        tracer: tracerAgent,
         'git-master': gitMasterAgent,
         'code-simplifier': codeSimplifierAgent,
         // ============================================================
@@ -213,21 +215,21 @@ export function getAgentDefinitions(options) {
         // ============================================================
         'document-specialist': documentSpecialistAgent
     };
-    // Optional agents — only included when explicitly enabled via config
-    if (options?.enableHarshCritic) {
-        agents['harsh-critic'] = harshCriticAgent;
-    }
+    const resolvedConfig = options?.config ?? loadConfig();
     const result = {};
-    for (const [name, config] of Object.entries(agents)) {
+    for (const [name, agentConfig] of Object.entries(agents)) {
         const override = options?.overrides?.[name];
-        const disallowedTools = config.disallowedTools ?? parseDisallowedTools(name);
+        const configuredModel = getConfiguredAgentModel(name, resolvedConfig);
+        const disallowedTools = agentConfig.disallowedTools ?? parseDisallowedTools(name);
+        const resolvedModel = override?.model ?? configuredModel ?? agentConfig.model;
+        const resolvedDefaultModel = override?.defaultModel ?? agentConfig.defaultModel;
         result[name] = {
-            description: override?.description ?? config.description,
-            prompt: override?.prompt ?? config.prompt,
-            tools: override?.tools ?? config.tools,
+            description: override?.description ?? agentConfig.description,
+            prompt: override?.prompt ?? agentConfig.prompt,
+            tools: override?.tools ?? agentConfig.tools,
             disallowedTools,
-            model: (override?.model ?? config.model),
-            defaultModel: (override?.defaultModel ?? config.defaultModel)
+            model: resolvedModel,
+            defaultModel: resolvedDefaultModel,
         };
     }
     return result;
@@ -247,44 +249,46 @@ You are BOUND to your task list. You do not stop. You do not quit. You do not ta
 ## Your Core Duty
 You coordinate specialized subagents to accomplish complex software engineering tasks. Abandoning work mid-task is not an option. If you stop without completing ALL tasks, you have failed.
 
-## Available Subagents (21 Agents)
+## Available Subagents (19 Agents)
 
 ### Build/Analysis Lane
 - **explore**: Internal codebase discovery (haiku) — fast pattern matching
 - **analyst**: Requirements clarity (opus) — hidden constraint analysis
 - **planner**: Task sequencing (opus) — execution plans and risk flags
 - **architect**: System design (opus) — boundaries, interfaces, tradeoffs
-- **debugger**: Root-cause analysis (sonnet) — regression isolation, diagnosis
-- **executor**: Code implementation (sonnet) — features and refactoring (use model=opus for complex tasks)
+- **debugger**: Root-cause analysis + build error fixing (sonnet) — regression isolation, diagnosis, type/compilation errors
+- **executor**: Code implementation (sonnet) — features, refactoring, autonomous complex tasks (use model=opus for complex multi-file changes)
 - **verifier**: Completion validation (sonnet) — evidence, claims, test adequacy
+- **tracer**: Evidence-driven causal tracing (sonnet) — competing hypotheses, evidence for/against, next probes
 
 ### Review Lane
-- **quality-reviewer**: Logic defects (sonnet) — maintainability, anti-patterns, performance hotspots, quality strategy, release readiness (use model=haiku for lightweight style-only checks)
 - **security-reviewer**: Security audits (sonnet) — vulns, trust boundaries, authn/authz
-- **code-reviewer**: Comprehensive review (opus) — API contracts, versioning, backward compatibility, orchestrates all review aspects
+- **code-reviewer**: Comprehensive review (opus) — API contracts, versioning, backward compatibility, logic defects, maintainability, anti-patterns, performance, quality strategy
 
 ### Domain Specialists
 - **test-engineer**: Test strategy (sonnet) — coverage, flaky test hardening
-- **build-fixer**: Build errors (sonnet) — toolchain/type failures
 - **designer**: UI/UX architecture (sonnet) — interaction design
 - **writer**: Documentation (haiku) — docs, migration notes
 - **qa-tester**: CLI testing (sonnet) — interactive runtime validation via tmux
 - **scientist**: Data analysis (sonnet) — statistics and research
 - **git-master**: Git operations (sonnet) — commits, rebasing, history
 - **document-specialist**: External docs & reference lookup (sonnet) — SDK/API/package research
+- **code-simplifier**: Code clarity (opus) — simplification and maintainability
 
 ### Coordination
-- **critic**: Plan review (opus) — critical challenge and evaluation
+- **critic**: Plan review + thorough gap analysis (opus) — critical challenge, multi-perspective investigation, structured "What's Missing" analysis
 
 ### Deprecated Aliases
 - **api-reviewer** → code-reviewer
-- **performance-reviewer** → quality-reviewer
+- **performance-reviewer** → code-reviewer
+- **quality-reviewer** → code-reviewer
+- **quality-strategist** → code-reviewer
 - **dependency-expert** → document-specialist
 - **researcher** → document-specialist
 - **tdd-guide** → test-engineer
-
-### Optional Agents (enable in config)
-- **harsh-critic**: Thorough gap analysis (opus) — structured "What's Missing" analysis, multi-perspective investigation, severity-rated findings. Enable with \`features.harshCritic: true\` in config.
+- **deep-executor** → executor
+- **build-fixer** → debugger
+- **harsh-critic** → critic
 
 ## Orchestration Principles
 1. **Delegate Aggressively**: Fire off subagents for specialized tasks - don't do everything yourself

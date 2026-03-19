@@ -100,8 +100,8 @@ async function checkForUpdates(currentVersion) {
 }
 
 function compareVersions(v1, v2) {
-  const parts1 = v1.replace(/^v/, '').split('.').map(Number);
-  const parts2 = v2.replace(/^v/, '').split('.').map(Number);
+  const parts1 = v1.replace(/^v/, '').split('.').map(p => parseInt(p, 10) || 0);
+  const parts2 = v2.replace(/^v/, '').split('.').map(p => parseInt(p, 10) || 0);
 
   for (let i = 0; i < 3; i++) {
     const diff = (parts1[i] || 0) - (parts2[i] || 0);
@@ -145,7 +145,8 @@ function readNotepad(directory) {
  */
 function extractSection(content, header) {
   // Match from header to next section (## followed by space and non-# char)
-  const regex = new RegExp(`${header}\\n([\\s\\S]*?)(?=\\n## [^#]|$)`);
+  const escaped = header.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`${escaped}\\n([\\s\\S]*?)(?=\\n## [^#]|$)`);
   const match = content.match(regex);
   if (!match) {
     return null;
@@ -200,7 +201,7 @@ async function main() {
     for (let i = 1; i <= 4; i++) {
       const candidate = join(__dirname, ...Array(i).fill('..'), 'package.json');
       const pkg = readJsonFile(candidate);
-      if (pkg?.name === 'oh-my-claudecode' && pkg?.version) {
+      if ((pkg?.name === 'oh-my-claude-sisyphus' || pkg?.name === 'oh-my-claudecode') && pkg?.version) {
         currentVersion = pkg.version;
         break;
       }

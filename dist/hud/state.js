@@ -10,6 +10,7 @@ import { getClaudeConfigDir } from '../utils/paths.js';
 import { validateWorkingDirectory, getOmcRoot } from '../lib/worktree-paths.js';
 import { atomicWriteJsonSync } from '../lib/atomic-write.js';
 import { DEFAULT_HUD_CONFIG, PRESET_CONFIGS } from './types.js';
+import { DEFAULT_MISSION_BOARD_CONFIG } from './mission-board.js';
 import { cleanupStaleBackgroundTasks, markOrphanedTasksAsStale } from './background-cleanup.js';
 // ============================================================================
 // Path Helpers
@@ -58,7 +59,8 @@ export function readHudState(directory) {
             const content = readFileSync(localStateFile, 'utf-8');
             return JSON.parse(content);
         }
-        catch {
+        catch (error) {
+            console.error('[HUD] Failed to read local state:', error instanceof Error ? error.message : error);
             // Fall through to legacy check
         }
     }
@@ -70,7 +72,8 @@ export function readHudState(directory) {
             const content = readFileSync(legacyStateFile, 'utf-8');
             return JSON.parse(content);
         }
-        catch {
+        catch (error) {
+            console.error('[HUD] Failed to read legacy state:', error instanceof Error ? error.message : error);
             return null;
         }
     }
@@ -87,7 +90,8 @@ export function writeHudState(state, directory) {
         atomicWriteJsonSync(localStateFile, state);
         return true;
     }
-    catch {
+    catch (error) {
+        console.error('[HUD] Failed to write state:', error instanceof Error ? error.message : error);
         return false;
     }
 }
@@ -137,7 +141,8 @@ export function readHudConfig() {
                 return mergeWithDefaults(config);
             }
         }
-        catch {
+        catch (error) {
+            console.error('[HUD] Failed to read settings.json:', error instanceof Error ? error.message : error);
             // Fall through to legacy config
         }
     }
@@ -149,7 +154,8 @@ export function readHudConfig() {
             const config = JSON.parse(content);
             return mergeWithDefaults(config);
         }
-        catch {
+        catch (error) {
+            console.error('[HUD] Failed to read legacy config:', error instanceof Error ? error.message : error);
             // Fall through to defaults
         }
     }
@@ -162,6 +168,16 @@ export function readHudConfig() {
 function mergeWithDefaults(config) {
     const preset = config.preset ?? DEFAULT_HUD_CONFIG.preset;
     const presetElements = PRESET_CONFIGS[preset] ?? {};
+    const missionBoardEnabled = config.missionBoard?.enabled
+        ?? config.elements?.missionBoard
+        ?? DEFAULT_HUD_CONFIG.missionBoard?.enabled
+        ?? false;
+    const missionBoard = {
+        ...DEFAULT_MISSION_BOARD_CONFIG,
+        ...DEFAULT_HUD_CONFIG.missionBoard,
+        ...config.missionBoard,
+        enabled: missionBoardEnabled,
+    };
     return {
         preset,
         elements: {
@@ -178,8 +194,11 @@ function mergeWithDefaults(config) {
             ...DEFAULT_HUD_CONFIG.contextLimitWarning,
             ...config.contextLimitWarning,
         },
+        missionBoard,
+        usageApiPollIntervalMs: config.usageApiPollIntervalMs ?? DEFAULT_HUD_CONFIG.usageApiPollIntervalMs,
         ...(config.rateLimitsProvider ? { rateLimitsProvider: config.rateLimitsProvider } : {}),
         ...(config.maxWidth != null ? { maxWidth: config.maxWidth } : {}),
+        ...(config.wrapMode != null ? { wrapMode: config.wrapMode } : {}),
     };
 }
 /**
@@ -199,7 +218,8 @@ export function writeHudConfig(config) {
         writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
         return true;
     }
-    catch {
+    catch (error) {
+        console.error('[HUD] Failed to write config:', error instanceof Error ? error.message : error);
         return false;
     }
 }

@@ -7,26 +7,19 @@
  *
  * Commands:
  * - run: Start an interactive session
- * - init: Initialize configuration in current directory
  * - config: Show or edit configuration
  * - setup: Sync all OMC components (hooks, agents, skills)
  */
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
   loadConfig,
   getConfigPaths,
-  generateConfigSchema
 } from '../config/loader.js';
-import {
-  getDefaultModelHigh,
-  getDefaultModelMedium,
-  getDefaultModelLow,
-} from '../config/models.js';
 import { createOmcSession } from '../index.js';
 import {
   checkForUpdates,
@@ -50,6 +43,8 @@ import {
   waitDetectCommand
 } from './commands/wait.js';
 import { doctorConflictsCommand } from './commands/doctor-conflicts.js';
+import { sessionSearchCommand } from './commands/session-search.js';
+import { teamCommand } from './commands/team.js';
 import {
   teleportCommand,
   teleportListCommand,
@@ -59,6 +54,7 @@ import {
 import { getRuntimePackageVersion } from '../lib/version.js';
 import { launchCommand } from './launch.js';
 import { interopCommand } from './interop.js';
+import { askCommand, ASK_USAGE } from './ask.js';
 import { warnIfWin32 } from './win32-warning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -75,8 +71,17 @@ warnIfWin32();
 async function defaultAction() {
   // Pass all CLI args through to launch (strip node + script path)
   const args = process.argv.slice(2);
+
+  // Defensive fallback: wrapper/bridge invocations must preserve explicit ask routing
+  // so nested Claude launch checks only apply to actual Claude launches.
+  if (args[0] === 'ask') {
+    await askCommand(args.slice(1));
+    return;
+  }
+
   await launchCommand(args);
 }
+
 
 program
   .name('omc')
@@ -129,180 +134,17 @@ Requirements:
   });
 
 /**
- * Init command - Initialize configuration
+ * Ask command - Run provider advisor prompt (claude|gemini)
  */
 program
-  .command('init')
-  .description('Initialize OMC configuration in the current directory')
-  .option('-g, --global', 'Initialize global user configuration')
-  .option('-f, --force', 'Overwrite existing configuration')
-  .addHelpText('after', `
-Examples:
-  $ omc init                     Initialize in current directory
-  $ omc init --global            Initialize global configuration
-  $ omc init --force             Overwrite existing config`)
-  .action(async (options) => {
-    console.log(chalk.yellow('⚠️  DEPRECATED: The init command is deprecated.'));
-    console.log(chalk.gray('Configuration is now managed automatically. Use /oh-my-claudecode:omc-setup instead.\n'));
-
-    const paths = getConfigPaths();
-    const targetPath = options.global ? paths.user : paths.project;
-    const targetDir = dirname(targetPath);
-
-    console.log(chalk.blue('Oh-My-ClaudeCode Configuration Setup\n'));
-
-    // Check if config already exists
-    if (existsSync(targetPath) && !options.force) {
-      console.log(chalk.yellow(`Configuration already exists at ${targetPath}`));
-      console.log(chalk.gray('Use --force to overwrite'));
-      return;
-    }
-
-    // Create directory if needed
-    if (!existsSync(targetDir)) {
-      mkdirSync(targetDir, { recursive: true });
-      console.log(chalk.green(`Created directory: ${targetDir}`));
-    }
-
-    // Resolve current default model IDs (respects OMC_MODEL_* env vars)
-    const modelHigh = getDefaultModelHigh();
-    const modelMedium = getDefaultModelMedium();
-    const modelLow = getDefaultModelLow();
-
-    // Generate config content
-    const configContent = `// Oh-My-ClaudeCode Configuration
-// See: https://github.com/Yeachan-Heo/oh-my-claudecode for documentation
-//
-// Model IDs can be overridden via environment variables:
-//   OMC_MODEL_HIGH   (opus-class)
-//   OMC_MODEL_MEDIUM (sonnet-class)
-//   OMC_MODEL_LOW    (haiku-class)
-{
-  "$schema": "./omc-schema.json",
-
-  // Agent model configurations
-  "agents": {
-    "omc": {
-      // Main orchestrator - uses the most capable model
-      "model": "${modelHigh}"
-    },
-    "explore": {
-      // Fast pattern matching - uses fastest model
-      "model": "${modelLow}"
-    },
-    "analyst": {
-      // Requirements analysis and acceptance criteria
-      "model": "${modelHigh}"
-    },
-    "planner": {
-      // Strategic task sequencing and execution plans
-      "model": "${modelHigh}"
-    },
-    "architect": {
-      // System design, boundaries, interfaces
-      "model": "${modelHigh}"
-    },
-    "debugger": {
-      // Root-cause analysis, regression isolation
-      "model": "${modelMedium}"
-    },
-    "executor": {
-      // Code implementation, refactoring
-      "model": "${modelMedium}"
-    },
-    "verifier": {
-      // Completion evidence, claim validation
-      "model": "${modelMedium}"
-    },
-    "critic": {
-      // Plan/design critical challenge
-      "model": "${modelHigh}"
-    },
-    "writer": {
-      // Docs, migration notes, user guidance
-      "model": "${modelLow}"
-    }
-  },
-
-  // Feature toggles
-  "features": {
-    "parallelExecution": true,
-    "lspTools": true,
-    "astTools": true,
-    "continuationEnforcement": true,
-    "autoContextInjection": true
-  },
-
-  // MCP server integrations
-  "mcpServers": {
-    "exa": {
-      "enabled": true
-      // Set EXA_API_KEY environment variable for API key
-    },
-    "context7": {
-      "enabled": true
-    }
-  },
-
-  // Permission settings
-  "permissions": {
-    "allowBash": true,
-    "allowEdit": true,
-    "allowWrite": true,
-    "maxBackgroundTasks": 5
-  },
-
-  // Magic keyword triggers (customize if desired)
-  "magicKeywords": {
-    "ultrawork": ["ultrawork", "ulw", "uw"],
-    "search": ["search", "find", "locate"],
-    "analyze": ["analyze", "investigate", "examine"]
-  }
-}
-`;
-
-    writeFileSync(targetPath, configContent);
-    console.log(chalk.green(`Created configuration: ${targetPath}`));
-
-    // Also create the JSON schema for editor support
-    const schemaPath = join(targetDir, 'omc-schema.json');
-    writeFileSync(schemaPath, JSON.stringify(generateConfigSchema(), null, 2));
-    console.log(chalk.green(`Created JSON schema: ${schemaPath}`));
-
-    console.log(chalk.blue('\nSetup complete!'));
-    console.log(chalk.gray('Edit the configuration file to customize your setup.'));
-
-    // Create AGENTS.md template if it doesn't exist
-    const agentsMdPath = join(process.cwd(), 'AGENTS.md');
-    if (!existsSync(agentsMdPath) && !options.global) {
-      const agentsMdContent = `# Project Agents Configuration
-
-This file provides context and instructions to AI agents working on this project.
-
-## Project Overview
-
-<!-- Describe your project here -->
-
-## Architecture
-
-<!-- Describe the architecture and key components -->
-
-## Conventions
-
-<!-- List coding conventions, naming patterns, etc. -->
-
-## Important Files
-
-<!-- List key files agents should know about -->
-
-## Common Tasks
-
-<!-- Describe common development tasks and how to perform them -->
-`;
-      writeFileSync(agentsMdPath, agentsMdContent);
-      console.log(chalk.green(`Created AGENTS.md template`));
-    }
+  .command('ask [args...]')
+  .description('Run provider advisor prompt and write an ask artifact')
+  .allowUnknownOption()
+  .addHelpText('after', `\n${ASK_USAGE}`)
+  .action(async (args: string[]) => {
+    await askCommand(args || []);
   });
+
 
 /**
  * Config command - Show or validate configuration
@@ -860,6 +702,7 @@ program
   .option('-f, --force', 'Force reinstall even if up to date')
   .option('-q, --quiet', 'Suppress output except for errors')
   .option('--standalone', 'Force npm update even in plugin context')
+  .option('--clean', 'Purge old plugin cache versions immediately (bypass 24h grace period)')
   .addHelpText('after', `
 Examples:
   $ omc update                   Check and install updates
@@ -911,7 +754,7 @@ Examples:
         console.log(chalk.blue('\nStarting update...\n'));
       }
 
-      const result = await performUpdate({ verbose: !options.quiet, standalone: options.standalone });
+      const result = await performUpdate({ verbose: !options.quiet, standalone: options.standalone, clean: options.clean });
 
       if (result.success) {
         if (!options.quiet) {
@@ -941,9 +784,10 @@ program
   .command('update-reconcile')
   .description('Internal: Reconcile runtime state after update (called by update command)')
   .option('-v, --verbose', 'Show detailed output')
+  .option('--skip-grace-period', 'Bypass 24h grace period for cache purge')
   .action(async (options) => {
     try {
-      const reconcileResult = reconcileUpdateRuntime({ verbose: options.verbose });
+      const reconcileResult = reconcileUpdateRuntime({ verbose: options.verbose, skipGracePeriod: options.skipGracePeriod });
       if (!reconcileResult.success) {
         console.error(chalk.red('Reconciliation failed:'));
         if (reconcileResult.errors) {
@@ -1176,6 +1020,7 @@ waitCmd
     });
   });
 
+
 /**
  * Teleport command - Quick worktree creation
  *
@@ -1250,6 +1095,43 @@ teleportCmd
   .action(async (path: string, options) => {
     const exitCode = await teleportRemoveCommand(path, options);
     if (exitCode !== 0) process.exit(exitCode);
+  });
+
+
+/**
+ * Session command - Search prior local session history
+ */
+const sessionCmd = program
+  .command('session')
+  .alias('sessions')
+  .description('Inspect prior local session history')
+  .addHelpText('after', `
+Examples:
+  $ omc session search "team leader stale"
+  $ omc session search notify-hook --since 7d
+  $ omc session search provider-routing --project all --json`);
+
+sessionCmd
+  .command('search <query>')
+  .description('Search prior local session transcripts and OMC session artifacts')
+  .option('-l, --limit <number>', 'Maximum number of matches to return', '10')
+  .option('-s, --session <id>', 'Restrict search to a specific session id')
+  .option('--since <duration|date>', 'Only include matches since a duration (e.g. 7d, 24h) or absolute date')
+  .option('--project <scope>', 'Project scope. Defaults to current project. Use "all" to search all local projects')
+  .option('--json', 'Output results as JSON')
+  .option('--case-sensitive', 'Match query case-sensitively')
+  .option('--context <chars>', 'Approximate snippet context on each side of a match', '120')
+  .action(async (query: string, options) => {
+    await sessionSearchCommand(query, {
+      limit: parseInt(options.limit, 10),
+      session: options.session,
+      since: options.since,
+      project: options.project,
+      json: options.json,
+      caseSensitive: options.caseSensitive,
+      context: parseInt(options.context, 10),
+      workingDirectory: process.cwd(),
+    });
   });
 
 /**
@@ -1348,8 +1230,14 @@ Examples:
         });
       }
 
+      const installed = getInstalledVersion();
+      const reportedVersion = installed?.version ?? version;
+
       console.log('');
-      console.log(chalk.gray(`Version: ${version}`));
+      console.log(chalk.gray(`Version: ${reportedVersion}`));
+      if (reportedVersion !== version) {
+        console.log(chalk.gray(`CLI package version: ${version}`));
+      }
       console.log(chalk.gray('Start Claude Code and use /oh-my-claudecode:omc-setup for interactive setup.'));
     }
   });
@@ -1392,13 +1280,56 @@ program
     const { main: hudMain } = await import('../hud/index.js');
     if (options.watch) {
       const intervalMs = parseInt(options.interval, 10);
+      let skipInit = false;
       while (true) {
-        await hudMain(true);
+        await hudMain(true, skipInit);
+        skipInit = true;
         await new Promise<void>(resolve => setTimeout(resolve, intervalMs));
       }
     } else {
       await hudMain();
     }
+  });
+
+program
+  .command('mission-board')
+  .description('Render the opt-in mission board snapshot for the current workspace')
+  .option('--json', 'Print raw mission-board JSON')
+  .action(async (options) => {
+    const { refreshMissionBoardState, renderMissionBoard } = await import('../hud/mission-board.js');
+    const state = refreshMissionBoardState(process.cwd());
+    if (options.json) {
+      console.log(JSON.stringify(state, null, 2));
+      return;
+    }
+
+    const lines = renderMissionBoard(state, {
+      enabled: true,
+      maxMissions: 5,
+      maxAgentsPerMission: 8,
+      maxTimelineEvents: 8,
+      persistCompletedForMinutes: 20,
+    });
+
+    console.log(lines.length > 0 ? lines.join('\n') : '(no active missions)');
+  });
+
+/**
+ * Team command - CLI API for team worker lifecycle operations
+ * Exposes OMC's `omc team api` interface.
+ *
+ * helpOption(false) prevents commander from intercepting --help;
+ * our teamCommand handler provides its own help output.
+ */
+program
+  .command('team')
+  .description('Team CLI API for worker lifecycle operations')
+  .helpOption(false)
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
+  .argument('[args...]', 'team subcommand arguments')
+  .action(async (args: string[]) => {
+    await teamCommand(args);
   });
 
 // Parse arguments

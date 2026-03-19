@@ -223,6 +223,23 @@ Located at `~/.claude/settings.json`:
 }
 ```
 
+### Remote MCP / Remote OMC Shape
+
+OMC can sync and preserve **remote MCP** entries in the unified registry. That is the supported narrow answer to "connect to a remote OMC":
+
+```json
+{
+  "mcpServers": {
+    "remoteOmc": {
+      "url": "https://lab.example.com/mcp",
+      "timeout": 30
+    }
+  }
+}
+```
+
+This supports remote MCP endpoints. It does **not** create a general multi-host OMC cluster or a transparent shared remote filesystem view.
+
 ### Plugin-Embedded MCP Servers
 
 Plugins can define MCP servers in their manifest:

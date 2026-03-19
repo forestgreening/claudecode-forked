@@ -19,6 +19,7 @@ import { renderRateLimits, renderRateLimitsWithBar, renderRateLimitsError, rende
 import { renderPermission } from './elements/permission.js';
 import { renderThinking } from './elements/thinking.js';
 import { renderSession } from './elements/session.js';
+import { renderTokenUsage } from './elements/token-usage.js';
 import { renderPromptTime } from './elements/prompt-time.js';
 import { renderAutopilot } from './elements/autopilot.js';
 import { renderCwd } from './elements/cwd.js';
@@ -27,12 +28,17 @@ import { renderModel } from './elements/model.js';
 import { renderApiKeySource } from './elements/api-key-source.js';
 import { renderCallCounts } from './elements/call-counts.js';
 import { renderContextLimitWarning } from './elements/context-warning.js';
+import { renderMissionBoard } from './mission-board.js';
 
 /**
  * ANSI escape sequence regex (matches SGR and other CSI sequences).
  * Used to skip escape codes when measuring/truncating visible width.
  */
 const ANSI_REGEX = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07/;
+
+
+const PLAIN_SEPARATOR = ' | ';
+const DIM_SEPARATOR = dim(PLAIN_SEPARATOR);
 
 /**
  * Truncate a single line to a maximum visual width, preserving ANSI escape codes.
@@ -85,6 +91,80 @@ export function truncateLineToMaxWidth(line: string, maxWidth: number): string {
   // to prevent color/style bleed into subsequent terminal output
   const reset = hasAnsi ? '\x1b[0m' : '';
   return result + reset + ELLIPSIS;
+}
+
+/**
+ * Wrap a single line at HUD separator boundaries so each wrapped line
+ * fits within maxWidth visible columns.
+ *
+ * Falls back to truncation when:
+ * - no separator is present
+ * - any single segment exceeds maxWidth
+ */
+function wrapLineToMaxWidth(line: string, maxWidth: number): string[] {
+  if (maxWidth <= 0) return [''];
+  if (stringWidth(line) <= maxWidth) return [line];
+
+  const separator = line.includes(DIM_SEPARATOR)
+    ? DIM_SEPARATOR
+    : line.includes(PLAIN_SEPARATOR)
+      ? PLAIN_SEPARATOR
+      : null;
+
+  if (!separator) {
+    return [truncateLineToMaxWidth(line, maxWidth)];
+  }
+
+  const segments = line.split(separator);
+  if (segments.length <= 1) {
+    return [truncateLineToMaxWidth(line, maxWidth)];
+  }
+
+  const wrapped: string[] = [];
+  let current = segments[0] ?? '';
+
+  for (let i = 1; i < segments.length; i += 1) {
+    const nextSegment = segments[i] ?? '';
+    const candidate = `${current}${separator}${nextSegment}`;
+
+    if (stringWidth(candidate) <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+
+    if (stringWidth(current) > maxWidth) {
+      wrapped.push(truncateLineToMaxWidth(current, maxWidth));
+    } else {
+      wrapped.push(current);
+    }
+
+    current = nextSegment;
+  }
+
+  if (stringWidth(current) > maxWidth) {
+    wrapped.push(truncateLineToMaxWidth(current, maxWidth));
+  } else {
+    wrapped.push(current);
+  }
+
+  return wrapped;
+}
+
+/**
+ * Apply maxWidth behavior by mode.
+ */
+function applyMaxWidthByMode(
+  lines: string[],
+  maxWidth: number | undefined,
+  wrapMode: 'truncate' | 'wrap' | undefined
+): string[] {
+  if (!maxWidth || maxWidth <= 0) return lines;
+
+  if (wrapMode === 'wrap') {
+    return lines.flatMap(line => wrapLineToMaxWidth(line, maxWidth));
+  }
+
+  return lines.map(line => truncateLineToMaxWidth(line, maxWidth));
 }
 
 /**
@@ -160,16 +240,19 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
     }
   }
 
-  // Rate limits (5h and weekly) - show error indicator or data
+  // Rate limits (5h and weekly) - data takes priority over error indicator
   if (enabledElements.rateLimits && context.rateLimitsResult) {
-    const errorIndicator = renderRateLimitsError(context.rateLimitsResult);
-    if (errorIndicator) {
-      elements.push(errorIndicator);
-    } else if (context.rateLimitsResult.rateLimits) {
+    if (context.rateLimitsResult.rateLimits) {
+      // Data available (possibly stale from 429) → always show data
+      const stale = context.rateLimitsResult.stale;
       const limits = enabledElements.useBars
-        ? renderRateLimitsWithBar(context.rateLimitsResult.rateLimits)
-        : renderRateLimits(context.rateLimitsResult.rateLimits);
+        ? renderRateLimitsWithBar(context.rateLimitsResult.rateLimits, undefined, stale)
+        : renderRateLimits(context.rateLimitsResult.rateLimits, stale);
       if (limits) elements.push(limits);
+    } else {
+      // No data → show error indicator
+      const errorIndicator = renderRateLimitsError(context.rateLimitsResult);
+      if (errorIndicator) elements.push(errorIndicator);
     }
   }
 
@@ -207,6 +290,11 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
       const session = renderSession(context.sessionHealth);
       if (session) elements.push(session);
     }
+  }
+
+  if (enabledElements.showTokens === true) {
+    const tokenUsage = renderTokenUsage(context.lastRequestTokenUsage, context.sessionTotalTokens);
+    if (tokenUsage) elements.push(tokenUsage);
   }
 
   // Ralph loop state
@@ -296,9 +384,8 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
 
   // Compose output
   const outputLines: string[] = [];
-
-  const gitInfoLine = gitElements.length > 0 ? gitElements.join(dim(' | ')) : null;
-  const headerLine = elements.join(dim(' | '));
+  const gitInfoLine = gitElements.length > 0 ? gitElements.join(dim(PLAIN_SEPARATOR)) : null;
+  const headerLine = elements.join(dim(PLAIN_SEPARATOR));
 
   // Position git info based on config (default: above for backward compatibility)
   const gitPosition = config.elements.gitInfoPosition ?? 'above';
@@ -323,12 +410,23 @@ export async function render(context: HudRenderContext, config: HudConfig): Prom
     if (todos) detailLines.push(todos);
   }
 
-  let finalLines = limitOutputLines([...outputLines, ...detailLines], config.elements.maxOutputLines);
-
-  // Apply maxWidth truncation if configured (Issue #1086)
-  if (config.maxWidth && config.maxWidth > 0) {
-    finalLines = finalLines.map(line => truncateLineToMaxWidth(line, config.maxWidth!));
+  if (context.missionBoard && (config.missionBoard?.enabled ?? config.elements.missionBoard ?? false)) {
+    detailLines.unshift(...renderMissionBoard(context.missionBoard, config.missionBoard));
   }
+
+  const widthAdjustedLines = applyMaxWidthByMode(
+    [...outputLines, ...detailLines],
+    config.maxWidth,
+    config.wrapMode
+  );
+
+  // Apply max output line limit after wrapping so wrapped output still respects maxOutputLines.
+  const limitedLines = limitOutputLines(widthAdjustedLines, config.elements.maxOutputLines);
+
+  // Ensure line-limit indicator and all other lines still respect maxWidth.
+  const finalLines = config.maxWidth && config.maxWidth > 0
+    ? limitedLines.map(line => truncateLineToMaxWidth(line, config.maxWidth!))
+    : limitedLines;
 
   return finalLines.join('\n');
 }

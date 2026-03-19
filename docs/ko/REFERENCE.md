@@ -9,7 +9,7 @@ oh-my-claudecode의 전체 레퍼런스입니다. 빠른 시작은 메인 [READM
 - [설치](#설치)
 - [설정](#설정)
 - [에이전트 (28개)](#에이전트-28개)
-- [스킬 (37개)](#스킬-37개)
+- [스킬 (33개)](#스킬-33개)
 - [슬래시 명령어](#슬래시-명령어)
 - [훅 시스템](#훅-시스템)
 - [매직 키워드](#매직-키워드)
@@ -80,7 +80,7 @@ oh-my-claudecode의 전체 레퍼런스입니다. 빠른 시작은 메인 [READM
 | 기능            | 미설정 시   | omc 설정 시                |
 | --------------- | ----------- | -------------------------- |
 | 에이전트 위임   | 수동만 가능 | 작업에 따라 자동           |
-| 키워드 감지     | 비활성화    | ultrawork, search, analyze |
+| 키워드 감지     | 비활성화    | ultrawork, search |
 | 할 일 연속 실행 | 기본        | 완료 강제                  |
 | 모델 라우팅     | 기본값      | 스마트 티어 선택           |
 | 스킬 조합       | 없음        | 자동 스킬 결합             |
@@ -183,7 +183,7 @@ Task 도구를 통해 호출할 때는 항상 `oh-my-claudecode:` 접두사를 �
 | **사전 플래닝**     | -                       | -                     | `analyst`           |
 | **테스트**          | -                       | `qa-tester`           | -                   |
 | **보안**            | `security-reviewer-low` | -                     | `security-reviewer` |
-| **빌드**            | -                       | `build-fixer`         | -                   |
+| **빌드**            | -                       | `debugger`            | -                   |
 | **TDD**             | `tdd-guide-low`         | `tdd-guide`           | -                   |
 | **코드 리뷰**       | -                       | -                     | `code-reviewer`     |
 | **데이터 사이언스** | -                       | `scientist`           | `scientist-high`    |
@@ -211,8 +211,8 @@ Task 도구를 통해 호출할 때는 항상 `oh-my-claudecode:` 접두사를 �
 | CLI 대화형 테스트      | `qa-tester`                   | sonnet |
 | 보안 리뷰              | `security-reviewer`           | opus   |
 | 빠른 보안 스캔         | `security-reviewer-low`       | haiku  |
-| 빌드 오류 수정         | `build-fixer`                 | sonnet |
-| 간단한 빌드 수정       | `build-fixer` (model=haiku)   | haiku  |
+| 빌드 오류 수정         | `debugger`                    | sonnet |
+| 간단한 빌드 수정       | `debugger` (model=haiku)      | haiku  |
 | TDD 워크플로우         | `tdd-guide`                   | sonnet |
 | 빠른 테스트 제안       | `tdd-guide-low`               | haiku  |
 | 코드 리뷰              | `code-reviewer`               | opus   |
@@ -223,7 +223,7 @@ Task 도구를 통해 호출할 때는 항상 `oh-my-claudecode:` 접두사를 �
 
 ---
 
-## 스킬 (37개)
+## 스킬 (33개)
 
 ### 코어 스킬
 
@@ -232,8 +232,6 @@ Task 도구를 통해 호출할 때는 항상 `oh-my-claudecode:` 접두사를 �
 | `orchestrate` | 멀티 에이전트 오케스트레이션 모드             | -                              |
 | `autopilot`   | 아이디어에서 작동하는 코드까지 완전 자율 실행 | `/oh-my-claudecode:autopilot`  |
 | `ultrawork`   | 병렬 에이전트를 통한 최대 성능                | `/oh-my-claudecode:ultrawork`  |
-| `ultrapilot`  | 3-5배 빠른 병렬 autopilot                     | `/oh-my-claudecode:ultrapilot` |
-| `swarm`       | 작업 클레이밍을 가진 N개의 조정된 에이전트    | `/oh-my-claudecode:swarm`      |
 | `pipeline`    | 순차적 에이전트 체이닝                        | `/oh-my-claudecode:pipeline`   |
 | ``            | 토큰 효율적 병렬 실행                         | `/oh-my-claudecode:`           |
 | `ralph`       | 완료될 때까지 자기 참조적 개발                | `/oh-my-claudecode:ralph`      |
@@ -249,15 +247,10 @@ Task 도구를 통해 호출할 때는 항상 `oh-my-claudecode:` 접두사를 �
 | ----------------- | ----------------------------------------- | ----------------------------------- |
 | `deepinit`        | 계층적 AGENTS.md 코드베이스 문서화        | `/oh-my-claudecode:deepinit`        |
 | `deepsearch`      | 다중 전략 코드베이스 검색                 | `/oh-my-claudecode:deepsearch`      |
-| `analyze`         | 심층 분석 및 조사                         | `/oh-my-claudecode:analyze`         |
 | `sciomc`          | 병렬 scientist 오케스트레이션             | `/oh-my-claudecode:sciomc`          |
 | `frontend-ui-ux`  | 디자이너 출신 개발자의 UI/UX 전문성       | (자동 활성화)                       |
 | `git-master`      | 원자적 커밋 및 히스토리를 위한 Git 전문가 | (자동 활성화)                       |
-| `tdd`             | TDD 강제: 테스트 우선 개발                | `/oh-my-claudecode:tdd`             |
 | `learner`         | 세션에서 재사용 가능한 스킬 추출          | `/oh-my-claudecode:learner`         |
-| `build-fix`       | 빌드 및 TypeScript 오류 수정              | `/oh-my-claudecode:build-fix`       |
-| `code-review`     | 종합 코드 리뷰                            | `/oh-my-claudecode:code-review`     |
-| `security-review` | 보안 취약점 탐지                          | `/oh-my-claudecode:security-review` |
 
 ### 유틸리티 스킬
 
@@ -286,8 +279,6 @@ Task 도구를 통해 호출할 때는 항상 `oh-my-claudecode:` 접두사를 �
 | `/oh-my-claudecode:orchestrate <task>`       | 멀티 에이전트 오케스트레이션 모드 활성화  |
 | `/oh-my-claudecode:autopilot <task>`         | 완전 자율 실행                            |
 | `/oh-my-claudecode:ultrawork <task>`         | 병렬 에이전트를 통한 최대 성능 모드       |
-| `/oh-my-claudecode:ultrapilot <task>`        | 병렬 autopilot (3-5배 빠름)               |
-| `/oh-my-claudecode:swarm <N>:<agent> <task>` | 조정된 에이전트 swarm                     |
 | `/oh-my-claudecode:pipeline <stages>`        | 순차적 에이전트 체이닝                    |
 | `/oh-my-claudecode: <task>`                  | 토큰 효율적 병렬 실행                     |
 | `/oh-my-claudecode:ralph-init <task>`        | 구조화된 작업 추적을 위한 PRD 초기화      |
@@ -298,9 +289,7 @@ Task 도구를 통해 호출할 때는 항상 `oh-my-claudecode:` 접두사를 �
 | `/oh-my-claudecode:review [plan-path]`       | critic을 통한 플랜 리뷰                   |
 | `/oh-my-claudecode:deepsearch <query>`       | 다중 전략 코드베이스 검색                 |
 | `/oh-my-claudecode:deepinit [path]`          | 계층적 AGENTS.md 파일로 코드베이스 인덱싱 |
-| `/oh-my-claudecode:analyze <target>`         | 심층 분석 및 조사                         |
 | `/oh-my-claudecode:sciomc <topic>`           | 병렬 리서치 오케스트레이션                |
-| `/oh-my-claudecode:tdd <feature>`            | TDD 워크플로우 강제                       |
 | `/oh-my-claudecode:learner`                  | 세션에서 재사용 가능한 스킬 추출          |
 | `/oh-my-claudecode:note <content>`           | notepad.md에 메모 저장                    |
 | `/oh-my-claudecode:cancel`                   | 통합 취소                                 |
@@ -324,9 +313,7 @@ oh-my-claudecode에는 Claude Code의 동작을 향상시키는 31개의 라이�
 | `autopilot`       | 아이디어에서 작동하는 코드까지 완전 자율 실행    |
 | `ultrawork`       | 최대 병렬 에이전트 실행                          |
 | `ralph`           | 검증 완료까지 지속                               |
-| `ultrapilot`      | 파일 소유권이 있는 병렬 autopilot                |
 | `ultraqa`         | 목표 달성까지 QA 사이클링                        |
-| `swarm`           | SQLite 작업 클레이밍을 가진 조정된 멀티 에이전트 |
 | `mode-registry`   | 활성 실행 모드 추적 (ecomode 포함)               |
 | `persistent-mode` | 세션 간 모드 상태 유지                           |
 
@@ -384,7 +371,6 @@ oh-my-claudecode에는 Claude Code의 동작을 향상시키는 31개의 라이�
 | `ultrawork`, `ulw`, `uw`                        | 병렬 에이전트 오케스트레이션 활성화 |
 | ``, `eco`, `efficient`, `save-tokens`, `budget` | 토큰 효율적 병렬 실행               |
 | `autopilot`, `build me`, `I want a`             | 완전 자율 실행                      |
-| `ultrapilot`, `parallel build`, `swarm build`   | 병렬 autopilot (3-5배 빠름)         |
 | `ralph`, `don't stop`, `must complete`          | 검증 완료까지 지속                  |
 | `plan this`, `plan the`                         | 플래닝 인터뷰 워크플로우            |
 | `ralplan`                                       | 반복적 플래닝 합의                  |
@@ -392,7 +378,6 @@ oh-my-claudecode에는 Claude Code의 동작을 향상시키는 31개의 라이�
 | `analyze`, `investigate`, `debug`               | 심층 분석 모드                      |
 | `sciomc`                                        | 병렬 리서치 오케스트레이션          |
 | `tdd`, `test first`, `red green`                | TDD 워크플로우 강제                 |
-| `swarm N agents`                                | 조정된 에이전트 swarm               |
 | `pipeline`, `chain agents`                      | 순차적 에이전트 체이닝              |
 | `stop`, `cancel`, `abort`                       | 통합 취소                           |
 
@@ -416,9 +401,6 @@ analyze why the tests are failing
 # 자율 실행
 autopilot: build a todo app with React
 
-# 병렬 autopilot
-ultrapilot: build a fullstack todo app
-
 # 지속성 모드
 ralph: refactor the authentication module
 
@@ -428,9 +410,6 @@ plan this feature
 # TDD 워크플로우
 tdd: implement password validation
 
-# 조정된 swarm
-swarm 5 agents: fix all lint errors
-
 # 에이전트 체이닝
 pipeline: analyze → fix → test this bug
 ```
@@ -439,7 +418,7 @@ pipeline: analyze → fix → test this bug
 
 ## MCP 경로 경계 규칙
 
-MCP 도구 (`ask_codex`, `ask_gemini`)는 보안을 위해 엄격한 경로 경계를 적용합니다. `prompt_file`과 `output_file` 모두 `working_directory`를 기준으로 해석됩니다.
+MCP 도구는 보안을 위해 엄격한 경로 경계를 적용합니다. `prompt_file`과 `output_file` 모두 `working_directory`를 기준으로 해석됩니다.
 
 ### 기본 동작 (엄격 모드)
 
@@ -606,28 +585,27 @@ oh-my-claudecode에는 에이전트 성능, 토큰 사용량 및 병렬 워크�
 | 기능                    | 설명                                    | 접근 방법                         |
 | ----------------------- | --------------------------------------- | --------------------------------- |
 | **Agent Observatory**   | 실시간 에이전트 상태, 효율성, 병목 현상 | HUD / API                         |
-| **Token Analytics**     | 비용 추적, 사용량 보고서, 예산 경고     | `omc stats`, `omc cost`           |
+| **Session-End Summaries** | 세션 종료 시 기록되는 요약 및 콜백 페이로드 | `.omc/sessions/*.json`, `session-end` |
 | **Session Replay**      | 세션 후 분석을 위한 이벤트 타임라인     | `.omc/state/agent-replay-*.jsonl` |
 | **Intervention System** | 정체된 에이전트, 비용 초과 자동 감지    | 자동                              |
 
 ### CLI 명령어
 
 ```bash
-omc stats          # 현재 세션 통계
-omc cost daily     # 일일 비용 보고서
-omc cost weekly    # 주간 비용 보고서
-omc agents         # 에이전트 분석
-omc backfill       # 과거 트랜스크립트 데이터 가져오기
+omc hud                              # 현재 HUD 상태줄 렌더링
+omc team status <team-name>          # 실행 중인 팀 작업 확인
+tail -20 .omc/state/agent-replay-*.jsonl
+ls .omc/sessions/*.json
 ```
 
-### HUD Analytics 프리셋
+### HUD 프리셋
 
-상태 표시줄에서 상세 비용 추적을 활성화합니다:
+상태 표시줄에서 에이전트/컨텍스트 가시성을 높이려면 지원되는 프리셋을 사용하세요:
 
 ```json
 {
   "omcHud": {
-    "preset": "analytics"
+    "preset": "focused"
   }
 }
 ```

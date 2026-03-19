@@ -6,6 +6,8 @@
 
 import type { AutopilotStateForHud } from './elements/autopilot.js';
 import type { ApiKeySource } from './elements/api-key-source.js';
+import type { MissionBoardConfig, MissionBoardState } from './mission-board.js';
+import { DEFAULT_MISSION_BOARD_CONFIG } from './mission-board.js';
 
 // Re-export for convenience
 export type { AutopilotStateForHud, ApiKeySource };
@@ -108,6 +110,12 @@ export interface SessionHealth {
   health: 'healthy' | 'warning' | 'critical';
 }
 
+export interface LastRequestTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens?: number;
+}
+
 export interface TranscriptData {
   agents: ActiveAgent[];
   todos: TodoItem[];
@@ -115,6 +123,8 @@ export interface TranscriptData {
   lastActivatedSkill?: SkillInvocation;
   pendingPermission?: PendingPermission;
   thinkingState?: ThinkingState;
+  lastRequestTokenUsage?: LastRequestTokenUsage;
+  sessionTotalTokens?: number;
   toolCallCount: number;
   agentCallCount: number;
   skillCallCount: number;
@@ -180,7 +190,7 @@ export interface RateLimits {
  * - 'auth': Authentication failure (token expired, refresh failed)
  * - 'no_credentials': No OAuth credentials available (expected for API key users)
  */
-export type UsageErrorReason = 'network' | 'timeout' | 'http' | 'auth' | 'no_credentials';
+export type UsageErrorReason = 'network' | 'timeout' | 'http' | 'auth' | 'no_credentials' | 'rate_limited';
 
 /**
  * Result of fetching usage data from the API.
@@ -191,6 +201,8 @@ export interface UsageResult {
   rateLimits: RateLimits | null;
   /** Error reason when API call fails (undefined on success or no credentials) */
   error?: UsageErrorReason;
+  /** True when serving cached data that may be outdated (429 or lock contention) */
+  stale?: boolean;
 }
 
 // ============================================================================
@@ -293,6 +305,9 @@ export interface HudRenderContext {
   /** Working directory */
   cwd: string;
 
+  /** Mission-board snapshot (opt-in) */
+  missionBoard?: MissionBoardState | null;
+
   /** Last activated skill from transcript */
   lastSkill: SkillInvocation | null;
 
@@ -313,6 +328,12 @@ export interface HudRenderContext {
 
   /** Session health metrics */
   sessionHealth: SessionHealth | null;
+
+  /** Last-request token usage parsed from transcript message.usage */
+  lastRequestTokenUsage?: LastRequestTokenUsage | null;
+
+  /** Session token total (input + output) when transcript parsing is reliable enough to calculate it */
+  sessionTotalTokens?: number | null;
 
   /** Installed OMC version (e.g. "4.1.10") */
   omcVersion: string | null;
@@ -408,11 +429,12 @@ export interface HudElementConfig {
   thinkingFormat: ThinkingFormat;  // Thinking indicator format
   apiKeySource: boolean;       // Show API key source (project/global/env)
   profile: boolean;            // Show active profile name (from CLAUDE_CONFIG_DIR)
+  missionBoard?: boolean;      // Show opt-in mission board above existing HUD detail lines
   promptTime: boolean;        // Show last prompt submission time (HH:MM:SS)
   sessionHealth: boolean;     // Show session health/duration
   showSessionDuration?: boolean;  // Show session:19m duration display (default: true if sessionHealth is true)
   showHealthIndicator?: boolean;  // Show 🟢/🟡/🔴 health indicator (default: true if sessionHealth is true)
-  showTokens?: boolean;           // Show token count like 79.3k (default: true if sessionHealth is true)
+  showTokens?: boolean;           // Show last-request token usage when enabled (tok:i1.2k/o340)
   useBars: boolean;           // Show visual progress bars instead of/alongside percentages
   showCallCounts?: boolean;   // Show tool/agent/skill call counts on the right of the status line (default: true)
   maxOutputLines: number;     // Max total output lines to prevent input field shrinkage
@@ -444,11 +466,19 @@ export interface HudConfig {
   thresholds: HudThresholds;
   staleTaskThresholdMinutes: number; // Default 30
   contextLimitWarning: ContextLimitWarningConfig;
+  /** Mission-board collection/rendering settings. */
+  missionBoard?: MissionBoardConfig;
+  /** Built-in usage API polling interval / success-cache TTL in milliseconds. */
+  usageApiPollIntervalMs: number;
   /** Optional custom rate limit provider; omit to use built-in Anthropic/z.ai */
   rateLimitsProvider?: RateLimitsProviderConfig;
-  /** Optional maximum width (columns) for statusline output. Lines exceeding this width are truncated with ellipsis. Useful when the terminal shares space with IDE panels or tabs. */
+  /** Optional maximum width (columns) for statusline output. */
   maxWidth?: number;
+  /** Controls maxWidth behavior: truncate with ellipsis (default) or wrap at " | " HUD element boundaries. */
+  wrapMode?: 'truncate' | 'wrap';
 }
+
+export const DEFAULT_HUD_USAGE_POLL_INTERVAL_MS = 90 * 1000;
 
 export const DEFAULT_HUD_CONFIG: HudConfig = {
   preset: 'focused',
@@ -478,8 +508,10 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
     thinkingFormat: 'text',   // Text format for backward compatibility
     apiKeySource: false, // Disabled by default
     profile: true,  // Show profile name when CLAUDE_CONFIG_DIR is set
+    missionBoard: false,  // Opt-in mission board for whole-run progress tracking
     promptTime: true,  // Show last prompt time by default
     sessionHealth: true,
+    showTokens: false,
     useBars: false,  // Disabled by default for backwards compatibility
     showCallCounts: true,  // Show tool/agent/skill call counts by default (Issue #710)
     maxOutputLines: 4,
@@ -496,6 +528,9 @@ export const DEFAULT_HUD_CONFIG: HudConfig = {
     threshold: 80,
     autoCompact: false,
   },
+  missionBoard: DEFAULT_MISSION_BOARD_CONFIG,
+  usageApiPollIntervalMs: DEFAULT_HUD_USAGE_POLL_INTERVAL_MS,
+  wrapMode: 'truncate',
 };
 
 export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
@@ -525,8 +560,10 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     thinkingFormat: 'text',
     apiKeySource: false,
     profile: true,
+    missionBoard: false,
     promptTime: false,
     sessionHealth: false,
+    showTokens: false,
     useBars: false,
     showCallCounts: false,
     maxOutputLines: 2,
@@ -558,8 +595,10 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     thinkingFormat: 'text',
     apiKeySource: false,
     profile: true,
+    missionBoard: false,
     promptTime: true,
     sessionHealth: true,
+    showTokens: false,
     useBars: true,
     showCallCounts: true,
     maxOutputLines: 4,
@@ -591,8 +630,10 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     thinkingFormat: 'text',
     apiKeySource: true,
     profile: true,
+    missionBoard: false,
     promptTime: true,
     sessionHealth: true,
+    showTokens: false,
     useBars: true,
     showCallCounts: true,
     maxOutputLines: 12,
@@ -624,8 +665,10 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     thinkingFormat: 'text',
     apiKeySource: false,
     profile: true,
+    missionBoard: false,
     promptTime: true,
     sessionHealth: true,
+    showTokens: false,
     useBars: false,
     showCallCounts: true,
     maxOutputLines: 4,
@@ -657,8 +700,10 @@ export const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>> = {
     thinkingFormat: 'text',
     apiKeySource: true,
     profile: true,
+    missionBoard: false,
     promptTime: true,
     sessionHealth: true,
+    showTokens: false,
     useBars: true,
     showCallCounts: true,
     maxOutputLines: 6,

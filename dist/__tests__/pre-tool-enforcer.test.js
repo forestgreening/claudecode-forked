@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,6 +16,15 @@ function runPreToolEnforcer(input) {
 function writeJson(filePath, data) {
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+function writeTranscriptWithContext(filePath, contextWindow, inputTokens) {
+    mkdirSync(dirname(filePath), { recursive: true });
+    const line = JSON.stringify({
+        usage: { context_window: contextWindow, input_tokens: inputTokens },
+        context_window: contextWindow,
+        input_tokens: inputTokens,
+    });
+    writeFileSync(filePath, `${line}\n`, 'utf-8');
 }
 describe('pre-tool-enforcer fallback gating (issue #970)', () => {
     let tempDir;
@@ -189,6 +198,48 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         });
         const readOutput = read.hookSpecificOutput;
         expect(readOutput.additionalContext).toBe('Read multiple files in parallel when possible for faster analysis.');
+    });
+    it('blocks agent-heavy Task preflight when transcript context budget is exhausted', () => {
+        const transcriptPath = join(tempDir, 'transcript.jsonl');
+        writeTranscriptWithContext(transcriptPath, 1000, 800); // 80%
+        const output = runPreToolEnforcer({
+            tool_name: 'Task',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:executor',
+                description: 'High fan-out execution',
+            },
+            cwd: tempDir,
+            transcript_path: transcriptPath,
+            session_id: 'session-1373',
+        });
+        expect(output.decision).toBe('block');
+        expect(String(output.reason)).toContain('Preflight context guard');
+        expect(String(output.reason)).toContain('Safe recovery');
+    });
+    it('allows non-agent-heavy tools even when transcript context is high', () => {
+        const transcriptPath = join(tempDir, 'transcript.jsonl');
+        writeTranscriptWithContext(transcriptPath, 1000, 900); // 90%
+        const output = runPreToolEnforcer({
+            tool_name: 'Read',
+            cwd: tempDir,
+            transcript_path: transcriptPath,
+            session_id: 'session-1373',
+        });
+        expect(output.continue).toBe(true);
+        expect(output.decision).toBeUndefined();
+    });
+    it('does not write skill-active-state for unknown custom skills', () => {
+        const sessionId = 'session-1581';
+        const output = runPreToolEnforcer({
+            tool_name: 'Skill',
+            toolInput: {
+                skill: 'phase-resume',
+            },
+            cwd: tempDir,
+            session_id: sessionId,
+        });
+        expect(output).toEqual({ continue: true, suppressOutput: true });
+        expect(existsSync(join(tempDir, '.omc', 'state', 'sessions', sessionId, 'skill-active-state.json'))).toBe(false);
     });
 });
 //# sourceMappingURL=pre-tool-enforcer.test.js.map

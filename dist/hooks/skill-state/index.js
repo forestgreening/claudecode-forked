@@ -4,9 +4,9 @@
  * Tracks when a skill is actively executing so the persistent-mode Stop hook
  * can prevent premature session termination.
  *
- * Skills like code-review, plan, tdd, analyze, build-fix, security-review,
- * external-context, deepinit etc. don't write mode state files (ralph-state.json,
- * etc.), so the Stop hook previously had no way to know they were running.
+ * Skills like plan, external-context, deepinit etc. don't write mode state
+ * files (ralph-state.json, etc.), so the Stop hook previously had no way to
+ * know they were running.
  *
  * This module provides:
  * 1. A protection level registry for all skills (none/light/medium/heavy)
@@ -33,9 +33,13 @@ const PROTECTION_CONFIGS = {
  *
  * - 'none': Already has dedicated mode state (ralph, autopilot, etc.) or is
  *   instant/read-only (trace, hud, omc-help, etc.)
- * - 'light': Quick agent shortcuts (tdd, build-fix, analyze)
+ * - 'light': Quick utility skills
  * - 'medium': Review/planning skills that run multiple agents
  * - 'heavy': Long-running skills (deepinit, omc-setup)
+ *
+ * IMPORTANT: When adding a new OMC skill, register it here with the
+ * appropriate protection level. Unregistered skills default to 'none'
+ * (no stop-hook protection) to avoid blocking external plugin skills.
  */
 const SKILL_PROTECTION = {
     // === Already have mode state → no additional protection ===
@@ -53,26 +57,28 @@ const SKILL_PROTECTION = {
     'omc-help': 'none',
     'learn-about-omc': 'none',
     note: 'none',
-    // === Light protection (simple agent shortcuts, 3 reinforcements) ===
-    tdd: 'light',
-    'build-fix': 'light',
-    analyze: 'light',
+    // === Light protection (simple shortcuts, 3 reinforcements) ===
     skill: 'light',
+    ask: 'light',
     'configure-notifications': 'light',
     // === Medium protection (review/planning, 5 reinforcements) ===
-    'code-review': 'medium',
-    'security-review': 'medium',
+    'omc-plan': 'medium',
     plan: 'medium',
-    ralplan: 'medium',
+    ralplan: 'none', // Has first-class checkRalplan() enforcement; no skill-active needed
+    'deep-interview': 'heavy',
     review: 'medium',
     'external-context': 'medium',
+    'ai-slop-cleaner': 'medium',
     sciomc: 'medium',
     learner: 'medium',
     'omc-setup': 'medium',
+    setup: 'medium', // alias for omc-setup
     'mcp-setup': 'medium',
     'project-session-manager': 'medium',
+    psm: 'medium', // alias for project-session-manager
     'writer-memory': 'medium',
     'ralph-init': 'medium',
+    release: 'medium',
     ccg: 'medium',
     // === Heavy protection (long-running, 10 reinforcements) ===
     deepinit: 'heavy',
@@ -82,11 +88,18 @@ const SKILL_PROTECTION = {
 // ---------------------------------------------------------------------------
 /**
  * Get the protection level for a skill.
- * Unknown skills default to 'light' for safety.
+ *
+ * Only skills explicitly registered in SKILL_PROTECTION receive stop-hook
+ * protection. Unregistered skills (including external plugin skills like
+ * Anthropic's example-skills, document-skills, superpowers, data, etc.)
+ * default to 'none' so the Stop hook does not block them.
+ *
+ * Note: bridge.ts strips the 'oh-my-claudecode:' prefix before calling
+ * this function, so skill names arrive in bare form (e.g., 'plan', 'xlsx').
  */
 export function getSkillProtection(skillName) {
     const normalized = skillName.toLowerCase().replace(/^oh-my-claudecode:/, '');
-    return SKILL_PROTECTION[normalized] ?? 'light';
+    return SKILL_PROTECTION[normalized] ?? 'none';
 }
 /**
  * Get the protection config for a skill.

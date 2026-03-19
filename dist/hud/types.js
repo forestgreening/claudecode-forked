@@ -3,6 +3,8 @@
  *
  * Type definitions for the HUD state, configuration, and rendering.
  */
+import { DEFAULT_MISSION_BOARD_CONFIG } from './mission-board.js';
+export const DEFAULT_HUD_USAGE_POLL_INTERVAL_MS = 90 * 1000;
 export const DEFAULT_HUD_CONFIG = {
     preset: 'focused',
     elements: {
@@ -31,8 +33,10 @@ export const DEFAULT_HUD_CONFIG = {
         thinkingFormat: 'text', // Text format for backward compatibility
         apiKeySource: false, // Disabled by default
         profile: true, // Show profile name when CLAUDE_CONFIG_DIR is set
+        missionBoard: false, // Opt-in mission board for whole-run progress tracking
         promptTime: true, // Show last prompt time by default
         sessionHealth: true,
+        showTokens: false,
         useBars: false, // Disabled by default for backwards compatibility
         showCallCounts: true, // Show tool/agent/skill call counts by default (Issue #710)
         maxOutputLines: 4,
@@ -49,6 +53,9 @@ export const DEFAULT_HUD_CONFIG = {
         threshold: 80,
         autoCompact: false,
     },
+    missionBoard: DEFAULT_MISSION_BOARD_CONFIG,
+    usageApiPollIntervalMs: DEFAULT_HUD_USAGE_POLL_INTERVAL_MS,
+    wrapMode: 'truncate',
 };
 export const PRESET_CONFIGS = {
     minimal: {
@@ -77,8 +84,10 @@ export const PRESET_CONFIGS = {
         thinkingFormat: 'text',
         apiKeySource: false,
         profile: true,
+        missionBoard: false,
         promptTime: false,
         sessionHealth: false,
+        showTokens: false,
         useBars: false,
         showCallCounts: false,
         maxOutputLines: 2,
@@ -110,8 +119,10 @@ export const PRESET_CONFIGS = {
         thinkingFormat: 'text',
         apiKeySource: false,
         profile: true,
+        missionBoard: false,
         promptTime: true,
         sessionHealth: true,
+        showTokens: false,
         useBars: true,
         showCallCounts: true,
         maxOutputLines: 4,
@@ -143,8 +154,10 @@ export const PRESET_CONFIGS = {
         thinkingFormat: 'text',
         apiKeySource: true,
         profile: true,
+        missionBoard: false,
         promptTime: true,
         sessionHealth: true,
+        showTokens: false,
         useBars: true,
         showCallCounts: true,
         maxOutputLines: 12,
@@ -176,8 +189,10 @@ export const PRESET_CONFIGS = {
         thinkingFormat: 'text',
         apiKeySource: false,
         profile: true,
+        missionBoard: false,
         promptTime: true,
         sessionHealth: true,
+        showTokens: false,
         useBars: false,
         showCallCounts: true,
         maxOutputLines: 4,
@@ -209,8 +224,10 @@ export const PRESET_CONFIGS = {
         thinkingFormat: 'text',
         apiKeySource: true,
         profile: true,
+        missionBoard: false,
         promptTime: true,
         sessionHealth: true,
+        showTokens: false,
         useBars: true,
         showCallCounts: true,
         maxOutputLines: 6,

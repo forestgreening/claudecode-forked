@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { limitOutputLines } from '../../hud/render.js';
 import { render } from '../../hud/render.js';
 import { DEFAULT_HUD_CONFIG, PRESET_CONFIGS } from '../../hud/types.js';
+import { stringWidth } from '../../utils/string-width.js';
 // Mock git elements
 vi.mock('../../hud/elements/git.js', () => ({
     renderGitRepo: vi.fn(() => 'repo:my-repo'),
@@ -197,6 +198,7 @@ describe('gitInfoPosition configuration', () => {
         thresholds: DEFAULT_HUD_CONFIG.thresholds,
         staleTaskThresholdMinutes: 30,
         contextLimitWarning: DEFAULT_HUD_CONFIG.contextLimitWarning,
+        usageApiPollIntervalMs: DEFAULT_HUD_CONFIG.usageApiPollIntervalMs,
     });
     beforeEach(() => {
         vi.clearAllMocks();
@@ -282,6 +284,188 @@ describe('gitInfoPosition configuration', () => {
             // Either git info is first, or if no git info, header is first
             expect(firstLineIsGitInfo || firstLineIsHeader).toBe(true);
         });
+    });
+    describe('rate limit rendering', () => {
+        it('prefers stale usage percentages over [API 429] when cached data exists', async () => {
+            const context = createMockContext();
+            context.rateLimitsResult = {
+                rateLimits: {
+                    fiveHourPercent: 45,
+                    weeklyPercent: 12,
+                    fiveHourResetsAt: null,
+                    weeklyResetsAt: null,
+                },
+                error: 'rate_limited',
+            };
+            const config = createMockConfig('above');
+            config.elements.rateLimits = true;
+            const result = await render(context, config);
+            expect(result).toContain('45%');
+            expect(result).toContain('12%');
+            expect(result).not.toContain('[API 429]');
+        });
+    });
+});
+describe('maxWidth wrapMode behavior', () => {
+    const createMockContext = () => ({
+        contextPercent: 30,
+        modelName: '',
+        ralph: null,
+        ultrawork: null,
+        prd: null,
+        autopilot: null,
+        activeAgents: [],
+        todos: [],
+        backgroundTasks: [],
+        cwd: '/home/user/project',
+        lastSkill: null,
+        rateLimitsResult: null,
+        customBuckets: null,
+        pendingPermission: null,
+        thinkingState: null,
+        sessionHealth: null,
+        omcVersion: '4.5.4',
+        updateAvailable: null,
+        toolCallCount: 0,
+        agentCallCount: 0,
+        skillCallCount: 0,
+        promptTime: null,
+        apiKeySource: null,
+        profileName: null,
+    });
+    const createWrapConfig = (wrapMode, maxWidth, maxOutputLines = 6) => ({
+        preset: 'focused',
+        elements: {
+            ...DEFAULT_HUD_CONFIG.elements,
+            omcLabel: true,
+            rateLimits: false,
+            ralph: false,
+            autopilot: false,
+            prdStory: false,
+            activeSkills: false,
+            contextBar: true,
+            agents: false,
+            backgroundTasks: false,
+            todos: false,
+            promptTime: false,
+            sessionHealth: false,
+            maxOutputLines,
+        },
+        thresholds: DEFAULT_HUD_CONFIG.thresholds,
+        staleTaskThresholdMinutes: 30,
+        contextLimitWarning: {
+            ...DEFAULT_HUD_CONFIG.contextLimitWarning,
+            threshold: 101,
+        },
+        usageApiPollIntervalMs: DEFAULT_HUD_CONFIG.usageApiPollIntervalMs,
+        maxWidth,
+        wrapMode,
+    });
+    it('uses truncate mode by default when wrapMode is not provided', async () => {
+        const context = createMockContext();
+        context.contextPercent = 88; // makes header longer
+        const config = createWrapConfig('truncate', 24);
+        delete config.wrapMode;
+        const result = await render(context, config);
+        const lines = result.split('\n');
+        expect(lines[0]).toMatch(/\.\.\.$/);
+    });
+    it('wraps long HUD lines at separator boundaries in wrap mode', async () => {
+        const context = createMockContext();
+        context.contextPercent = 88;
+        const config = createWrapConfig('wrap', 24);
+        const result = await render(context, config);
+        const lines = result.split('\n');
+        expect(lines.length).toBeGreaterThan(1);
+        expect(lines[0]).toContain('[OMC');
+        lines.forEach(line => {
+            expect(stringWidth(line)).toBeLessThanOrEqual(24);
+        });
+    });
+    it('respects maxOutputLines after wrap expansion', async () => {
+        const context = createMockContext();
+        context.contextPercent = 88;
+        const config = createWrapConfig('wrap', 14, 2);
+        const result = await render(context, config);
+        const lines = result.split('\n');
+        expect(lines).toHaveLength(2);
+        lines.forEach(line => {
+            expect(stringWidth(line)).toBeLessThanOrEqual(14);
+        });
+    });
+    it('keeps truncation indicator within maxWidth when maxOutputLines is hit', async () => {
+        const context = createMockContext();
+        context.contextPercent = 88;
+        const config = createWrapConfig('wrap', 8, 1);
+        const result = await render(context, config);
+        const lines = result.split('\n');
+        expect(lines).toHaveLength(1);
+        expect(stringWidth(lines[0] ?? '')).toBeLessThanOrEqual(8);
+    });
+});
+describe('token usage rendering', () => {
+    const createTokenContext = () => ({
+        contextPercent: 30,
+        modelName: 'claude-sonnet-4-5',
+        ralph: null,
+        ultrawork: null,
+        prd: null,
+        autopilot: null,
+        activeAgents: [],
+        todos: [],
+        backgroundTasks: [],
+        cwd: '/home/user/project',
+        lastSkill: null,
+        rateLimitsResult: null,
+        customBuckets: null,
+        pendingPermission: null,
+        thinkingState: null,
+        sessionHealth: { durationMinutes: 10, messageCount: 5, health: 'healthy' },
+        lastRequestTokenUsage: { inputTokens: 1250, outputTokens: 340, reasoningTokens: 120 },
+        sessionTotalTokens: 6590,
+        omcVersion: '4.5.4',
+        updateAvailable: null,
+        toolCallCount: 0,
+        agentCallCount: 0,
+        skillCallCount: 0,
+        promptTime: null,
+        apiKeySource: null,
+        profileName: null,
+    });
+    const createTokenConfig = (showTokens) => ({
+        preset: 'focused',
+        elements: {
+            ...DEFAULT_HUD_CONFIG.elements,
+            omcLabel: true,
+            rateLimits: false,
+            ralph: false,
+            autopilot: false,
+            prdStory: false,
+            activeSkills: false,
+            contextBar: false,
+            agents: false,
+            backgroundTasks: false,
+            todos: false,
+            promptTime: false,
+            sessionHealth: true,
+            showTokens,
+            maxOutputLines: 4,
+        },
+        thresholds: DEFAULT_HUD_CONFIG.thresholds,
+        staleTaskThresholdMinutes: 30,
+        contextLimitWarning: {
+            ...DEFAULT_HUD_CONFIG.contextLimitWarning,
+            threshold: 101,
+        },
+        usageApiPollIntervalMs: DEFAULT_HUD_CONFIG.usageApiPollIntervalMs,
+    });
+    it('shows last-request token usage when enabled', async () => {
+        const result = await render(createTokenContext(), createTokenConfig(true));
+        expect(result).toContain('tok:i1.3k/o340 r120 s6.6k');
+    });
+    it('omits last-request token usage when explicitly disabled', async () => {
+        const result = await render(createTokenContext(), createTokenConfig(false));
+        expect(result).not.toContain('tok:');
     });
 });
 //# sourceMappingURL=render.test.js.map

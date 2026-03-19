@@ -9,6 +9,7 @@ import { readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { readReplayEvents, getReplaySummary, } from '../hooks/subagent-tracker/session-replay.js';
 import { validateWorkingDirectory, } from '../lib/worktree-paths.js';
+import { sessionSearchTool } from './session-history-tools.js';
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -96,15 +97,17 @@ function formatTimelineEvent(event) {
         case 'hook_fire':
             detail = `${event.hook} fired (${event.hook_event})`;
             break;
-        case 'hook_result':
+        case 'hook_result': {
             detail = `${event.hook} result`;
+            const hookParts = [];
             if (event.duration_ms)
-                detail += ` (${event.duration_ms}ms`;
+                hookParts.push(`${event.duration_ms}ms`);
             if (event.context_injected)
-                detail += `, context: ${event.context_length || '?'}B`;
-            if (event.duration_ms)
-                detail += ')';
+                hookParts.push(`context: ${event.context_length || '?'}B`);
+            if (hookParts.length)
+                detail += ` (${hookParts.join(', ')})`;
             break;
+        }
         case 'keyword_detected':
             detail = `"${event.keyword}" detected`;
             break;
@@ -408,5 +411,5 @@ export const traceSummaryTool = {
 /**
  * All trace tools for registration
  */
-export const traceTools = [traceTimelineTool, traceSummaryTool];
+export const traceTools = [traceTimelineTool, traceSummaryTool, sessionSearchTool];
 //# sourceMappingURL=trace-tools.js.map

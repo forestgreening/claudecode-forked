@@ -14,6 +14,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { BuiltinSkill } from './types.js';
 import { parseFrontmatter, parseFrontmatterAliases } from '../../utils/frontmatter.js';
+import { parseSkillPipelineMetadata, renderSkillPipelineGuidance } from '../../utils/skill-pipeline.js';
+import { renderSkillRuntimeGuidance } from './runtime-guidance.js';
 
 // Get the project root directory (go up from src/features/builtin-skills/)
 const __filename = fileURLToPath(import.meta.url);
@@ -53,9 +55,15 @@ function loadSkillFromFile(skillPath: string, skillName: string): BuiltinSkill[]
   try {
     const content = readFileSync(skillPath, 'utf-8');
     const { metadata, body } = parseFrontmatter(content);
-
     const resolvedName = metadata.name || skillName;
     const safePrimaryName = toSafeSkillName(resolvedName);
+    const pipeline = parseSkillPipelineMetadata(metadata);
+    const template = [
+      body.trim(),
+      renderSkillRuntimeGuidance(safePrimaryName),
+      renderSkillPipelineGuidance(safePrimaryName, pipeline),
+    ].filter((section) => section.trim().length > 0).join('\n\n');
+
     const safeAliases = Array.from(
       new Set(
         parseFrontmatterAliases(metadata.aliases)
@@ -82,11 +90,12 @@ function loadSkillFromFile(skillPath: string, skillName: string): BuiltinSkill[]
           ? undefined
           : `Skill alias "${name}" is deprecated. Use "${safePrimaryName}" instead.`,
         description: metadata.description || '',
-        template: body.trim(),
+        template,
         // Optional fields from frontmatter
         model: metadata.model,
         agent: metadata.agent,
         argumentHint: metadata['argument-hint'],
+        pipeline: name === safePrimaryName ? pipeline : undefined,
       });
     }
 

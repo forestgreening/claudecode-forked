@@ -110,6 +110,7 @@ export {
   type InjectionStrategy,
   type InjectionResult
 } from './features/index.js';
+export { searchSessionHistory, parseSinceSpec, type SessionHistoryMatch, type SessionHistorySearchOptions, type SessionHistorySearchReport } from './features/index.js';
 
 // Agent module exports (modular agent system)
 export {
@@ -145,6 +146,8 @@ export {
   exploreAgent,
   EXPLORE_PROMPT_METADATA,
   DOCUMENT_SPECIALIST_PROMPT_METADATA,
+  tracerAgent,
+  TRACER_PROMPT_METADATA,
   executorAgent,
   EXECUTOR_PROMPT_METADATA,
   designerAgent,
@@ -294,9 +297,7 @@ export function createOmcSession(options?: OmcOptions): OmcSession {
   }
 
   // Get agent definitions
-  const agents = getAgentDefinitions({
-    enableHarshCritic: config.features?.harshCritic === true,
-  });
+  const agents = getAgentDefinitions({ config });
 
   // Build MCP servers configuration
   const externalMcpServers = getDefaultMcpServers({

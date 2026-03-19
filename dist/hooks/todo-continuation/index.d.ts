@@ -72,6 +72,8 @@ export interface StopContext {
     end_turn_reason?: string;
     /** End turn reason (from API) - camelCase variant */
     endTurnReason?: string;
+    /** Generic reason field from some stop-hook payloads */
+    reason?: string;
     /** Whether user explicitly requested stop - snake_case variant */
     user_requested?: boolean;
     /** Whether user explicitly requested stop - camelCase variant */
@@ -86,6 +88,10 @@ export interface StopContext {
     tool_input?: unknown;
     /** Tool input from hook payload (camelCase) */
     toolInput?: unknown;
+    /** Transcript path from hook payload (snake_case) */
+    transcript_path?: string;
+    /** Transcript path from hook payload (camelCase) */
+    transcriptPath?: string;
 }
 export interface TodoContinuationHook {
     checkIncomplete: (sessionId?: string) => Promise<IncompleteTodosResult>;
@@ -137,6 +143,18 @@ export declare function isContextLimitStop(context?: StopContext): boolean;
  * Fix for: https://github.com/Yeachan-Heo/oh-my-claudecode/issues/777
  */
 export declare function isRateLimitStop(context?: StopContext): boolean;
+/**
+ * Auth-related stop reasons that should bypass continuation re-enforcement.
+ * Keep exactly 16 entries in sync with script/template variants.
+ */
+export declare const AUTHENTICATION_ERROR_PATTERNS: readonly ["authentication_error", "authentication_failed", "auth_error", "unauthorized", "unauthorised", "401", "403", "forbidden", "invalid_token", "token_invalid", "token_expired", "expired_token", "oauth_expired", "oauth_token_expired", "invalid_grant", "insufficient_scope"];
+/**
+ * Detect if stop was triggered by authentication/authorization failures.
+ * Auth failures should not re-trigger persistent continuation loops.
+ *
+ * Fix for: issue #1308
+ */
+export declare function isAuthenticationError(context?: StopContext): boolean;
 /**
  * Get the Task directory for a session
  *

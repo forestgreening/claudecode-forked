@@ -22,6 +22,19 @@ describe('HUD Default Configuration', () => {
     it('should use text format for thinking indicator by default', () => {
       expect(DEFAULT_HUD_CONFIG.elements.thinkingFormat).toBe('text');
     });
+
+    it('should keep mission board disabled by default', () => {
+      expect(DEFAULT_HUD_CONFIG.elements.missionBoard).toBe(false);
+      expect(DEFAULT_HUD_CONFIG.missionBoard?.enabled).toBe(false);
+    });
+
+    it('should default wrapMode to truncate', () => {
+      expect(DEFAULT_HUD_CONFIG.wrapMode).toBe('truncate');
+    });
+
+    it('should keep token usage display optional by default', () => {
+      expect(DEFAULT_HUD_CONFIG.elements.showTokens).toBe(false);
+    });
   });
 
   describe('PRESET_CONFIGS', () => {
@@ -58,6 +71,12 @@ describe('HUD Default Configuration', () => {
     it('should have model disabled in all presets', () => {
       presets.forEach(preset => {
         expect(PRESET_CONFIGS[preset].model).toBe(false);
+      });
+    });
+
+    it('should keep token usage display disabled in all presets', () => {
+      presets.forEach(preset => {
+        expect(PRESET_CONFIGS[preset].showTokens).toBe(false);
       });
     });
   });

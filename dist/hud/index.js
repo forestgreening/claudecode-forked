@@ -13,6 +13,7 @@ import { getUsage } from "./usage-api.js";
 import { executeCustomProvider } from "./custom-rate-provider.js";
 import { render } from "./render.js";
 import { detectApiKeySource } from "./elements/api-key-source.js";
+import { refreshMissionBoardState } from "./mission-board.js";
 import { sanitizeOutput } from "./sanitize.js";
 import { getRuntimePackageVersion } from "../lib/version.js";
 import { compareVersions } from "../features/auto-update.js";
@@ -48,10 +49,12 @@ async function calculateSessionHealth(sessionStart, contextPercent) {
  * Main HUD entry point
  * @param watchMode - true when called from the --watch polling loop (stdin is TTY)
  */
-async function main(watchMode = false) {
+async function main(watchMode = false, skipInit = false) {
     try {
         // Initialize HUD state (cleanup stale/orphaned tasks)
-        await initializeHUDState();
+        if (!skipInit) {
+            await initializeHUDState();
+        }
         // Read stdin from Claude Code
         let stdin = await readStdin();
         if (stdin) {
@@ -127,8 +130,11 @@ async function main(watchMode = false) {
             if (omcVersion === 'unknown')
                 omcVersion = null;
         }
-        catch {
+        catch (error) {
             // Ignore version detection errors
+            if (process.env.OMC_DEBUG) {
+                console.error('[HUD] Version detection error:', error instanceof Error ? error.message : error);
+            }
         }
         // Async file read to avoid blocking event loop (Issue #1273)
         try {
@@ -140,9 +146,16 @@ async function main(watchMode = false) {
                 updateAvailable = cached.latestVersion;
             }
         }
-        catch {
-            // Ignore update cache read errors
+        catch (error) {
+            // Ignore update cache read errors - expected if file doesn't exist yet
+            if (process.env.OMC_DEBUG) {
+                console.error('[HUD] Update cache read error:', error instanceof Error ? error.message : error);
+            }
         }
+        const missionBoardEnabled = config.missionBoard?.enabled ?? config.elements.missionBoard ?? false;
+        const missionBoard = missionBoardEnabled
+            ? await refreshMissionBoardState(cwd, config.missionBoard)
+            : null;
         // Build render context
         const context = {
             contextPercent: getContextPercent(stdin),
@@ -155,12 +168,15 @@ async function main(watchMode = false) {
             todos: transcriptData.todos,
             backgroundTasks: getRunningTasks(hudState),
             cwd,
+            missionBoard,
             lastSkill: transcriptData.lastActivatedSkill || null,
             rateLimitsResult,
             customBuckets,
             pendingPermission: transcriptData.pendingPermission || null,
             thinkingState: transcriptData.thinkingState || null,
             sessionHealth: await calculateSessionHealth(sessionStart, getContextPercent(stdin)),
+            lastRequestTokenUsage: transcriptData.lastRequestTokenUsage || null,
+            sessionTotalTokens: transcriptData.sessionTotalTokens ?? null,
             omcVersion,
             updateAvailable,
             toolCallCount: transcriptData.toolCallCount,
@@ -195,8 +211,11 @@ async function main(watchMode = false) {
                     threshold: config.contextLimitWarning.threshold,
                 }));
             }
-            catch {
+            catch (error) {
                 // Silent failure — don't break HUD rendering
+                if (process.env.OMC_DEBUG) {
+                    console.error('[HUD] Auto-compact trigger write error:', error instanceof Error ? error.message : error);
+                }
             }
         }
         // Render and output

@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -7,11 +7,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 const SCRIPT_PATH = join(process.cwd(), 'scripts', 'pre-tool-enforcer.mjs');
 
 function runPreToolEnforcer(input: Record<string, unknown>): Record<string, unknown> {
+  return runPreToolEnforcerWithEnv(input);
+}
+
+function runPreToolEnforcerWithEnv(
+  input: Record<string, unknown>,
+  env: Record<string, string> = {},
+): Record<string, unknown> {
   const stdout = execSync(`node "${SCRIPT_PATH}"`, {
     input: JSON.stringify(input),
     encoding: 'utf-8',
     timeout: 5000,
-    env: { ...process.env, NODE_ENV: 'test' },
+    env: { ...process.env, NODE_ENV: 'test', ...env },
   });
 
   return JSON.parse(stdout.trim()) as Record<string, unknown>;
@@ -20,6 +27,16 @@ function runPreToolEnforcer(input: Record<string, unknown>): Record<string, unkn
 function writeJson(filePath: string, data: Record<string, unknown>): void {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+function writeTranscriptWithContext(filePath: string, contextWindow: number, inputTokens: number): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const line = JSON.stringify({
+    usage: { context_window: contextWindow, input_tokens: inputTokens },
+    context_window: contextWindow,
+    input_tokens: inputTokens,
+  });
+  writeFileSync(filePath, `${line}\n`, 'utf-8');
 }
 
 describe('pre-tool-enforcer fallback gating (issue #970)', () => {
@@ -240,5 +257,146 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
     expect(readOutput.additionalContext).toBe(
       'Read multiple files in parallel when possible for faster analysis.',
     );
+  });
+
+  it('suppresses routine pre-tool reminders when OMC_QUIET=1', () => {
+    const bash = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Bash',
+        cwd: tempDir,
+      },
+      { OMC_QUIET: '1' },
+    );
+
+    expect(bash).toEqual({ continue: true, suppressOutput: true });
+
+    const read = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Read',
+        cwd: tempDir,
+      },
+      { OMC_QUIET: '1' },
+    );
+
+    expect(read).toEqual({ continue: true, suppressOutput: true });
+  });
+
+  it('keeps active-mode and team-routing enforcement visible when OMC_QUIET is enabled', () => {
+    const sessionId = 'session-1646';
+    writeJson(
+      join(tempDir, '.omc', 'state', 'sessions', sessionId, 'ralph-state.json'),
+      {
+        active: true,
+        session_id: sessionId,
+      },
+    );
+    writeJson(
+      join(tempDir, '.omc', 'state', 'sessions', sessionId, 'team-state.json'),
+      {
+        active: true,
+        session_id: sessionId,
+        team_name: 'quiet-team',
+      },
+    );
+
+    const modeOutput = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'ToolSearch',
+        cwd: tempDir,
+        session_id: sessionId,
+      },
+      { OMC_QUIET: '2' },
+    );
+
+    expect(String((modeOutput.hookSpecificOutput as Record<string, unknown>).additionalContext))
+      .toContain('The boulder never stops');
+
+    const taskOutput = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Task',
+        toolInput: {
+          subagent_type: 'oh-my-claudecode:executor',
+          description: 'Fix type errors',
+          prompt: 'Fix all type errors in src/auth/',
+        },
+        cwd: tempDir,
+        session_id: sessionId,
+      },
+      { OMC_QUIET: '2' },
+    );
+
+    expect(String((taskOutput.hookSpecificOutput as Record<string, unknown>).additionalContext))
+      .toContain('TEAM ROUTING REQUIRED');
+  });
+
+  it('suppresses routine agent spawn chatter at OMC_QUIET=2 but not enforcement', () => {
+    const output = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Task',
+        toolInput: {
+          subagent_type: 'oh-my-claudecode:executor',
+          description: 'Fix type errors',
+          prompt: 'Fix all type errors in src/auth/',
+        },
+        cwd: tempDir,
+        session_id: 'session-1646-quiet',
+      },
+      { OMC_QUIET: '2' },
+    );
+
+    expect(output).toEqual({ continue: true, suppressOutput: true });
+  });
+
+  it('blocks agent-heavy Task preflight when transcript context budget is exhausted', () => {
+    const transcriptPath = join(tempDir, 'transcript.jsonl');
+    writeTranscriptWithContext(transcriptPath, 1000, 800); // 80%
+
+    const output = runPreToolEnforcer({
+      tool_name: 'Task',
+      toolInput: {
+        subagent_type: 'oh-my-claudecode:executor',
+        description: 'High fan-out execution',
+      },
+      cwd: tempDir,
+      transcript_path: transcriptPath,
+      session_id: 'session-1373',
+    });
+
+    expect(output.decision).toBe('block');
+    expect(String(output.reason)).toContain('Preflight context guard');
+    expect(String(output.reason)).toContain('Safe recovery');
+  });
+
+  it('allows non-agent-heavy tools even when transcript context is high', () => {
+    const transcriptPath = join(tempDir, 'transcript.jsonl');
+    writeTranscriptWithContext(transcriptPath, 1000, 900); // 90%
+
+    const output = runPreToolEnforcer({
+      tool_name: 'Read',
+      cwd: tempDir,
+      transcript_path: transcriptPath,
+      session_id: 'session-1373',
+    });
+
+    expect(output.continue).toBe(true);
+    expect(output.decision).toBeUndefined();
+  });
+
+  it('does not write skill-active-state for unknown custom skills', () => {
+    const sessionId = 'session-1581';
+
+    const output = runPreToolEnforcer({
+      tool_name: 'Skill',
+      toolInput: {
+        skill: 'phase-resume',
+      },
+      cwd: tempDir,
+      session_id: sessionId,
+    });
+
+    expect(output).toEqual({ continue: true, suppressOutput: true });
+    expect(
+      existsSync(join(tempDir, '.omc', 'state', 'sessions', sessionId, 'skill-active-state.json')),
+    ).toBe(false);
   });
 });

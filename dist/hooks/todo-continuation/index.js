@@ -44,6 +44,19 @@ export function isValidSessionId(sessionId) {
     const SAFE_SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/;
     return SAFE_SESSION_ID_PATTERN.test(sessionId);
 }
+function getStopReasonFields(context) {
+    if (!context)
+        return [];
+    return [
+        context.stop_reason,
+        context.stopReason,
+        context.end_turn_reason,
+        context.endTurnReason,
+        context.reason,
+    ]
+        .filter((value) => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.toLowerCase().replace(/[\s-]+/g, '_'));
+}
 /**
  * Detect if stop was due to user abort (not natural completion)
  *
@@ -131,15 +144,11 @@ export function isExplicitCancelCommand(context) {
  * See: https://github.com/Yeachan-Heo/oh-my-claudecode/issues/213
  */
 export function isContextLimitStop(context) {
-    if (!context)
-        return false;
-    const reason = (context.stop_reason ?? context.stopReason ?? '').toLowerCase();
-    const endTurnReason = (context.end_turn_reason ?? context.endTurnReason ?? '').toLowerCase();
     const contextPatterns = [
         'context_limit', 'context_window', 'context_exceeded', 'context_full',
         'max_context', 'token_limit', 'max_tokens', 'conversation_too_long', 'input_too_long'
     ];
-    return contextPatterns.some(p => reason.includes(p) || endTurnReason.includes(p));
+    return getStopReasonFields(context).some((value) => contextPatterns.some((pattern) => value.includes(pattern)));
 }
 /**
  * Detect if stop was triggered by rate limiting (HTTP 429 / quota exhausted).
@@ -165,6 +174,41 @@ export function isRateLimitStop(context) {
         'overloaded', 'capacity',
     ];
     return rateLimitPatterns.some(p => reason.includes(p) || endTurnReason.includes(p));
+}
+/**
+ * Auth-related stop reasons that should bypass continuation re-enforcement.
+ * Keep exactly 16 entries in sync with script/template variants.
+ */
+export const AUTHENTICATION_ERROR_PATTERNS = [
+    'authentication_error',
+    'authentication_failed',
+    'auth_error',
+    'unauthorized',
+    'unauthorised',
+    '401',
+    '403',
+    'forbidden',
+    'invalid_token',
+    'token_invalid',
+    'token_expired',
+    'expired_token',
+    'oauth_expired',
+    'oauth_token_expired',
+    'invalid_grant',
+    'insufficient_scope',
+];
+/**
+ * Detect if stop was triggered by authentication/authorization failures.
+ * Auth failures should not re-trigger persistent continuation loops.
+ *
+ * Fix for: issue #1308
+ */
+export function isAuthenticationError(context) {
+    if (!context)
+        return false;
+    const reason = (context.stop_reason ?? context.stopReason ?? '').toLowerCase();
+    const endTurnReason = (context.end_turn_reason ?? context.endTurnReason ?? '').toLowerCase();
+    return AUTHENTICATION_ERROR_PATTERNS.some((pattern) => (reason.includes(pattern) || endTurnReason.includes(pattern)));
 }
 /**
  * Get possible todo file locations

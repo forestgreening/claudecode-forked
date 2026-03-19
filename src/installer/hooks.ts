@@ -68,13 +68,6 @@ export function isWindows(): boolean {
   return process.platform === "win32";
 }
 
-/**
- * Check if Node.js hooks should be used.
- * @deprecated Always returns true. Bash hooks were removed in v3.9.0.
- */
-export function shouldUseNodeHooks(): boolean {
-  return true;
-}
 
 /** Get the Claude config directory path (cross-platform) */
 export function getClaudeConfigDir(): string {
@@ -246,6 +239,60 @@ IF COMPLEX (architecture, multi-system, debugging after 2+ failures):
 
 SYNTHESIZE findings before proceeding.
 </analyze-mode>
+
+---
+
+`;
+
+/**
+ * Code review mode message
+ * Replaces skills/code-review/SKILL.md after skill deletion
+ */
+export const CODE_REVIEW_MESSAGE = `<code-review-mode>
+[CODE REVIEW MODE ACTIVATED]
+Perform a comprehensive code review of the relevant changes or target area. Focus on correctness, maintainability, edge cases, regressions, and test adequacy before recommending changes.
+</code-review-mode>
+
+---
+
+`;
+
+/**
+ * Security review mode message
+ * Replaces skills/security-review/SKILL.md after skill deletion
+ */
+export const SECURITY_REVIEW_MESSAGE = `<security-review-mode>
+[SECURITY REVIEW MODE ACTIVATED]
+Perform a focused security review of the relevant changes or target area. Check trust boundaries, auth/authz, data exposure, input validation, command/file access, secrets handling, and escalation risks before recommending changes.
+</security-review-mode>
+
+---
+
+`;
+
+/**
+ * TDD mode message
+ * Replaces skills/tdd/SKILL.md after skill deletion
+ */
+export const TDD_MESSAGE = `<tdd-mode>
+[TDD MODE ACTIVATED]
+
+THE IRON LAW: NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST.
+Write code before test? DELETE IT. Start over. No exceptions.
+
+RED-GREEN-REFACTOR CYCLE:
+1. RED: Write failing test for NEXT functionality. Run it - MUST FAIL.
+2. GREEN: Write ONLY enough code to pass. No extras. Run test - MUST PASS.
+3. REFACTOR: Clean up. Run tests after EVERY change. Must stay green.
+4. REPEAT with next failing test.
+
+ENFORCEMENT:
+- Code written before test → STOP. Delete code. Write test first.
+- Test passes on first run → Test is wrong. Fix it to fail first.
+- Multiple features in one cycle → STOP. One test, one feature.
+
+Delegate to test-engineer agent for test strategy. The discipline IS the value.
+</tdd-mode>
 
 ---
 
@@ -427,30 +474,3 @@ export function getHooksSettingsConfig(): typeof HOOKS_SETTINGS_CONFIG_NODE {
   return HOOKS_SETTINGS_CONFIG_NODE;
 }
 
-// =============================================================================
-// HOOK SCRIPTS EXPORTS
-// =============================================================================
-
-/**
- * Get Node.js hook scripts (Cross-platform)
- * Returns a record of filename -> content for all Node.js hooks
- *
- * @deprecated Hook scripts are no longer installed to ~/.claude/hooks/.
- * All hooks are delivered via the plugin's hooks/hooks.json + scripts/.
- * Kept for test compatibility only.
- */
-export function getHookScripts(): Record<string, string> {
-  return {
-    "keyword-detector.mjs": loadTemplate("keyword-detector.mjs"),
-    "stop-continuation.mjs": loadTemplate("stop-continuation.mjs"),
-    "persistent-mode.mjs": loadTemplate("persistent-mode.mjs"),
-    "session-start.mjs": loadTemplate("session-start.mjs"),
-    "pre-tool-use.mjs": loadTemplate("pre-tool-use.mjs"),
-    "post-tool-use.mjs": loadTemplate("post-tool-use.mjs"),
-    "post-tool-use-failure.mjs": loadTemplate("post-tool-use-failure.mjs"),
-    "code-simplifier.mjs": loadTemplate("code-simplifier.mjs"),
-    // Shared library modules (in lib/ subdirectory)
-    "lib/stdin.mjs": loadTemplate("lib/stdin.mjs"),
-    "lib/atomic-write.mjs": loadTemplate("lib/atomic-write.mjs"),
-  };
-}

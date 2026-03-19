@@ -7,13 +7,18 @@
  * When execution='solo', uses direct executor agents in the current session.
  */
 
-import type { PipelineStageAdapter, PipelineConfig, PipelineContext } from '../pipeline-types.js';
+import type {
+  PipelineStageAdapter,
+  PipelineConfig,
+  PipelineContext,
+} from "../pipeline-types.js";
+import { resolveAutopilotPlanPath } from "../../../config/plan-output.js";
 
-export const EXECUTION_COMPLETION_SIGNAL = 'PIPELINE_EXECUTION_COMPLETE';
+export const EXECUTION_COMPLETION_SIGNAL = "PIPELINE_EXECUTION_COMPLETE";
 
 export const executionAdapter: PipelineStageAdapter = {
-  id: 'execution',
-  name: 'Execution',
+  id: "execution",
+  name: "Execution",
   completionSignal: EXECUTION_COMPLETION_SIGNAL,
 
   shouldSkip(_config: PipelineConfig): boolean {
@@ -22,8 +27,8 @@ export const executionAdapter: PipelineStageAdapter = {
   },
 
   getPrompt(context: PipelineContext): string {
-    const planPath = context.planPath || '.omc/plans/autopilot-impl.md';
-    const isTeam = context.config.execution === 'team';
+    const planPath = context.planPath || resolveAutopilotPlanPath();
+    const isTeam = context.config.execution === "team";
 
     if (isTeam) {
       return `## PIPELINE STAGE: EXECUTION (Team Mode)
@@ -49,8 +54,8 @@ Use the Team orchestrator to execute tasks in parallel:
 Match agent types to task complexity:
 - Simple tasks (single file, config): \`executor\` with \`model="haiku"\`
 - Standard implementation: \`executor\` with \`model="sonnet"\`
-- Complex work (architecture, refactoring): \`deep-executor\` with \`model="opus"\`
-- Build issues: \`build-fixer\` with \`model="sonnet"\`
+- Complex work (architecture, refactoring): \`executor\` with \`model="opus"\`
+- Build issues: \`debugger\` with \`model="sonnet"\`
 - Test creation: \`test-engineer\` with \`model="sonnet"\`
 - UI work: \`designer\` with \`model="sonnet"\`
 
@@ -97,7 +102,7 @@ Task(subagent_type="oh-my-claudecode:executor", model="haiku", prompt="...")
 Task(subagent_type="oh-my-claudecode:executor", model="sonnet", prompt="...")
 
 // For complex work (architecture, debugging, refactoring)
-Task(subagent_type="oh-my-claudecode:deep-executor", model="opus", prompt="...")
+Task(subagent_type="oh-my-claudecode:executor", model="opus", prompt="...")
 \`\`\`
 
 ### Progress Tracking

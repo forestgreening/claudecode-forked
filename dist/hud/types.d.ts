@@ -5,6 +5,7 @@
  */
 import type { AutopilotStateForHud } from './elements/autopilot.js';
 import type { ApiKeySource } from './elements/api-key-source.js';
+import type { MissionBoardConfig, MissionBoardState } from './mission-board.js';
 export type { AutopilotStateForHud, ApiKeySource };
 export interface BackgroundTask {
     id: string;
@@ -80,6 +81,11 @@ export interface SessionHealth {
     messageCount: number;
     health: 'healthy' | 'warning' | 'critical';
 }
+export interface LastRequestTokenUsage {
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens?: number;
+}
 export interface TranscriptData {
     agents: ActiveAgent[];
     todos: TodoItem[];
@@ -87,6 +93,8 @@ export interface TranscriptData {
     lastActivatedSkill?: SkillInvocation;
     pendingPermission?: PendingPermission;
     thinkingState?: ThinkingState;
+    lastRequestTokenUsage?: LastRequestTokenUsage;
+    sessionTotalTokens?: number;
     toolCallCount: number;
     agentCallCount: number;
     skillCallCount: number;
@@ -135,7 +143,7 @@ export interface RateLimits {
  * - 'auth': Authentication failure (token expired, refresh failed)
  * - 'no_credentials': No OAuth credentials available (expected for API key users)
  */
-export type UsageErrorReason = 'network' | 'timeout' | 'http' | 'auth' | 'no_credentials';
+export type UsageErrorReason = 'network' | 'timeout' | 'http' | 'auth' | 'no_credentials' | 'rate_limited';
 /**
  * Result of fetching usage data from the API.
  * - rateLimits: The rate limit data (null if no data available)
@@ -145,6 +153,8 @@ export interface UsageResult {
     rateLimits: RateLimits | null;
     /** Error reason when API call fails (undefined on success or no credentials) */
     error?: UsageErrorReason;
+    /** True when serving cached data that may be outdated (429 or lock contention) */
+    stale?: boolean;
 }
 /**
  * Custom rate limit provider configuration.
@@ -224,6 +234,8 @@ export interface HudRenderContext {
     backgroundTasks: BackgroundTask[];
     /** Working directory */
     cwd: string;
+    /** Mission-board snapshot (opt-in) */
+    missionBoard?: MissionBoardState | null;
     /** Last activated skill from transcript */
     lastSkill: SkillInvocation | null;
     /** Rate limits result from built-in Anthropic/z.ai providers (includes error state) */
@@ -238,6 +250,10 @@ export interface HudRenderContext {
     thinkingState: ThinkingState | null;
     /** Session health metrics */
     sessionHealth: SessionHealth | null;
+    /** Last-request token usage parsed from transcript message.usage */
+    lastRequestTokenUsage?: LastRequestTokenUsage | null;
+    /** Session token total (input + output) when transcript parsing is reliable enough to calculate it */
+    sessionTotalTokens?: number | null;
     /** Installed OMC version (e.g. "4.1.10") */
     omcVersion: string | null;
     /** Latest available version from npm registry (null if up to date or unknown) */
@@ -315,6 +331,7 @@ export interface HudElementConfig {
     thinkingFormat: ThinkingFormat;
     apiKeySource: boolean;
     profile: boolean;
+    missionBoard?: boolean;
     promptTime: boolean;
     sessionHealth: boolean;
     showSessionDuration?: boolean;
@@ -347,11 +364,18 @@ export interface HudConfig {
     thresholds: HudThresholds;
     staleTaskThresholdMinutes: number;
     contextLimitWarning: ContextLimitWarningConfig;
+    /** Mission-board collection/rendering settings. */
+    missionBoard?: MissionBoardConfig;
+    /** Built-in usage API polling interval / success-cache TTL in milliseconds. */
+    usageApiPollIntervalMs: number;
     /** Optional custom rate limit provider; omit to use built-in Anthropic/z.ai */
     rateLimitsProvider?: RateLimitsProviderConfig;
-    /** Optional maximum width (columns) for statusline output. Lines exceeding this width are truncated with ellipsis. Useful when the terminal shares space with IDE panels or tabs. */
+    /** Optional maximum width (columns) for statusline output. */
     maxWidth?: number;
+    /** Controls maxWidth behavior: truncate with ellipsis (default) or wrap at " | " HUD element boundaries. */
+    wrapMode?: 'truncate' | 'wrap';
 }
+export declare const DEFAULT_HUD_USAGE_POLL_INTERVAL_MS: number;
 export declare const DEFAULT_HUD_CONFIG: HudConfig;
 export declare const PRESET_CONFIGS: Record<HudPreset, Partial<HudElementConfig>>;
 //# sourceMappingURL=types.d.ts.map

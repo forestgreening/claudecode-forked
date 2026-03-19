@@ -151,21 +151,21 @@ node -e "if(process.platform==='win32'){console.log('Skipped (Windows)')}else{re
 
 Read `~/.claude/settings.json`, then update/add the `statusLine` field.
 
-**IMPORTANT:** The command must use an absolute path, not `~`, because Windows does not expand `~` in shell commands.
+**IMPORTANT:** Do not use `~` in the command. On Unix, use `$HOME` to keep the path portable across machines. On Windows, use an absolute path because Windows does not expand `~` in shell commands.
 
-First, determine the correct path:
+If you are on Windows, first determine the correct path:
 ```bash
 node -e "const p=require('path').join(require('os').homedir(),'.claude','hud','omc-hud.mjs').split(require('path').sep).join('/');console.log(JSON.stringify(p))"
 ```
 
 **IMPORTANT:** The command path MUST use forward slashes on all platforms. Claude Code executes statusLine commands via bash, which interprets backslashes as escape characters and breaks the path.
 
-Then set the `statusLine` field using the resolved path. On Unix it will look like:
+Then set the `statusLine` field. On Unix it should stay portable and look like:
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "node /home/username/.claude/hud/omc-hud.mjs"
+    "command": "node $HOME/.claude/hud/omc-hud.mjs"
   }
 }
 ```
@@ -244,7 +244,9 @@ When agents are running, the HUD shows detailed information on separate lines:
 
 ## Configuration Location
 
-HUD config is stored at: `~/.claude/.omc/hud-config.json`
+HUD config is stored in `~/.claude/settings.json` under the `omcHud` key (or your custom config directory if `CLAUDE_CONFIG_DIR` is set).
+
+Legacy config location (deprecated): `~/.claude/.omc/hud-config.json`
 
 ## Manual Configuration
 
@@ -256,24 +258,54 @@ You can manually edit the config file. Each option can be set individually - any
   "elements": {
     "omcLabel": true,
     "ralph": true,
+    "autopilot": true,
     "prdStory": true,
     "activeSkills": true,
     "lastSkill": true,
     "contextBar": true,
     "agents": true,
+    "agentsFormat": "multiline",
     "backgroundTasks": true,
     "todos": true,
-    "showCache": true,
-    "showCost": true,
+    "thinking": true,
+    "thinkingFormat": "text",
+    "permissionStatus": false,
+    "apiKeySource": false,
+    "profile": true,
+    "promptTime": true,
+    "sessionHealth": true,
+    "useBars": true,
+    "showCallCounts": true,
+    "safeMode": true,
     "maxOutputLines": 4
   },
   "thresholds": {
     "contextWarning": 70,
+    "contextCompactSuggestion": 80,
     "contextCritical": 85,
     "ralphWarning": 7
+  },
+  "staleTaskThresholdMinutes": 30,
+  "contextLimitWarning": {
+    "threshold": 80,
+    "autoCompact": false
   }
 }
 ```
+
+### safeMode
+
+When `safeMode` is `true` (default), the HUD strips ANSI codes and uses ASCII-only output to prevent terminal rendering corruption during concurrent updates. This is especially important on Windows and when using terminal multiplexers.
+
+### agentsFormat Options
+
+- `count`: agents:2
+- `codes`: agents:Oes (type-coded with model tier casing)
+- `codes-duration`: agents:O(2m)es (codes with duration)
+- `detailed`: agents:[architect(2m),explore,exec]
+- `descriptions`: O:analyzing code | e:searching (codes + what they're doing)
+- `tasks`: [analyzing code, searching...] (just descriptions)
+- `multiline`: Multi-line display with full agent details on separate lines
 
 ## Troubleshooting
 
@@ -287,7 +319,7 @@ If the HUD is not showing:
 {
   "statusLine": {
     "type": "command",
-    "command": "node /home/username/.claude/hud/omc-hud.mjs"
+    "command": "node $HOME/.claude/hud/omc-hud.mjs"
   }
 }
 ```

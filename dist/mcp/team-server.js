@@ -11,12 +11,110 @@ import { join } from 'path';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { homedir } from 'os';
-import { killWorkerPanes } from '../team/tmux-session.js';
+import { killWorkerPanes, killTeamSession } from '../team/tmux-session.js';
 import { validateTeamName } from '../team/team-name.js';
 import { NudgeTracker } from '../team/idle-nudge.js';
 import { clearScopedTeamState, convergeJobWithResultArtifact, isJobTerminal, isPidAlive, } from './team-job-convergence.js';
 const omcTeamJobs = new Map();
 const OMC_JOBS_DIR = process.env.OMC_JOBS_DIR || join(homedir(), '.omc', 'team-jobs');
+const DEPRECATION_CODE = 'deprecated_cli_only';
+const TEAM_CLI_REPLACEMENT_HINTS = {
+    omc_run_team_start: 'omc team start',
+    omc_run_team_status: 'omc team status <job_id>',
+    omc_run_team_wait: 'omc team wait <job_id>',
+    omc_run_team_cleanup: 'omc team cleanup <job_id>',
+};
+function isDeprecatedTeamToolName(name) {
+    return Object.prototype.hasOwnProperty.call(TEAM_CLI_REPLACEMENT_HINTS, name);
+}
+export function createDeprecatedCliOnlyEnvelope(toolName) {
+    return createDeprecatedCliOnlyEnvelopeWithArgs(toolName);
+}
+function quoteCliValue(value) {
+    return JSON.stringify(value);
+}
+function buildCliReplacement(toolName, args) {
+    const hasArgsObject = typeof args === 'object' && args !== null;
+    if (!hasArgsObject) {
+        return TEAM_CLI_REPLACEMENT_HINTS[toolName];
+    }
+    const parsed = (typeof args === 'object' && args !== null) ? args : {};
+    if (toolName === 'omc_run_team_start') {
+        const teamName = typeof parsed.teamName === 'string' ? parsed.teamName.trim() : '';
+        const cwd = typeof parsed.cwd === 'string' ? parsed.cwd.trim() : '';
+        const newWindow = parsed.newWindow === true;
+        const agentTypes = Array.isArray(parsed.agentTypes)
+            ? parsed.agentTypes.filter((item) => typeof item === 'string' && item.trim().length > 0)
+            : [];
+        const tasks = Array.isArray(parsed.tasks)
+            ? parsed.tasks
+                .map((task) => (typeof task === 'object' && task !== null && typeof task.description === 'string')
+                ? task.description.trim()
+                : '')
+                .filter(Boolean)
+            : [];
+        const flags = ['omc', 'team', 'start'];
+        if (teamName)
+            flags.push('--name', quoteCliValue(teamName));
+        if (cwd)
+            flags.push('--cwd', quoteCliValue(cwd));
+        if (newWindow)
+            flags.push('--new-window');
+        if (agentTypes.length > 0) {
+            const uniqueAgentTypes = new Set(agentTypes);
+            if (uniqueAgentTypes.size === 1) {
+                flags.push('--agent', quoteCliValue(agentTypes[0]), '--count', String(agentTypes.length));
+            }
+            else {
+                flags.push('--agent', quoteCliValue(agentTypes.join(',')));
+            }
+        }
+        else {
+            flags.push('--agent', '"claude"');
+        }
+        if (tasks.length > 0) {
+            for (const task of tasks) {
+                flags.push('--task', quoteCliValue(task));
+            }
+        }
+        else {
+            flags.push('--task', '"<task>"');
+        }
+        return flags.join(' ');
+    }
+    const jobId = typeof parsed.job_id === 'string' ? parsed.job_id.trim() : '<job_id>';
+    if (toolName === 'omc_run_team_status') {
+        return `omc team status --job-id ${quoteCliValue(jobId)}`;
+    }
+    if (toolName === 'omc_run_team_wait') {
+        const timeoutMs = typeof parsed.timeout_ms === 'number' && Number.isFinite(parsed.timeout_ms)
+            ? ` --timeout-ms ${Math.floor(parsed.timeout_ms)}`
+            : '';
+        return `omc team wait --job-id ${quoteCliValue(jobId)}${timeoutMs}`;
+    }
+    if (toolName === 'omc_run_team_cleanup') {
+        const graceMs = typeof parsed.grace_ms === 'number' && Number.isFinite(parsed.grace_ms)
+            ? ` --grace-ms ${Math.floor(parsed.grace_ms)}`
+            : '';
+        return `omc team cleanup --job-id ${quoteCliValue(jobId)}${graceMs}`;
+    }
+    return TEAM_CLI_REPLACEMENT_HINTS[toolName];
+}
+export function createDeprecatedCliOnlyEnvelopeWithArgs(toolName, args) {
+    const cliReplacement = buildCliReplacement(toolName, args);
+    return {
+        content: [{
+                type: 'text',
+                text: JSON.stringify({
+                    code: DEPRECATION_CODE,
+                    tool: toolName,
+                    message: 'Legacy team MCP runtime tools are deprecated. Use the omc team CLI instead.',
+                    cli_replacement: cliReplacement,
+                }),
+            }],
+        isError: true,
+    };
+}
 function persistJob(jobId, job) {
     try {
         if (!existsSync(OMC_JOBS_DIR))
@@ -75,6 +173,7 @@ const startSchema = z.object({
         description: z.string().describe('Full task description'),
     })).describe('Tasks to distribute to workers'),
     cwd: z.string().describe('Working directory (absolute path)'),
+    newWindow: z.boolean().optional().describe('Spawn workers in a dedicated tmux window instead of splitting the current window'),
 });
 const statusSchema = z.object({
     job_id: z.string().describe('Job ID returned by omc_run_team_start'),
@@ -84,7 +183,7 @@ const waitSchema = z.object({
     timeout_ms: z.number().optional().describe('Maximum wait time in ms (default: 300000, max: 3600000)'),
     nudge_delay_ms: z.number().optional().describe('Milliseconds a pane must be idle before nudging (default: 30000)'),
     nudge_max_count: z.number().optional().describe('Maximum nudges per pane (default: 3)'),
-    nudge_message: z.string().optional().describe('Message sent as nudge (default: "Continue working on your assigned task.")'),
+    nudge_message: z.string().optional().describe('Message sent as nudge (default: "Continue working on your assigned task and report concrete progress (not ACK-only).")'),
 });
 const cleanupSchema = z.object({
     job_id: z.string().describe('Job ID returned by omc_run_team_start'),
@@ -255,7 +354,16 @@ export async function handleCleanup(args) {
         return { content: [{ type: 'text', text: `Job ${job_id} not found` }] };
     const panes = await loadPaneIds(job_id);
     let paneCleanupMessage = 'No pane IDs recorded for this job — pane cleanup skipped.';
-    if (panes?.paneIds?.length) {
+    if (panes?.sessionName && (panes.ownsWindow === true || !panes.sessionName.includes(':'))) {
+        const sessionMode = panes.ownsWindow === true
+            ? (panes.sessionName.includes(':') ? 'dedicated-window' : 'detached-session')
+            : 'detached-session';
+        await killTeamSession(panes.sessionName, panes.paneIds, panes.leaderPaneId, { sessionMode });
+        paneCleanupMessage = panes.ownsWindow
+            ? 'Cleaned up team tmux window.'
+            : `Cleaned up ${panes.paneIds.length} worker pane(s).`;
+    }
+    else if (panes?.paneIds?.length) {
         await killWorkerPanes({
             paneIds: panes.paneIds,
             leaderPaneId: panes.leaderPaneId,
@@ -273,7 +381,7 @@ export async function handleCleanup(args) {
 const TOOLS = [
     {
         name: 'omc_run_team_start',
-        description: 'Spawn tmux CLI workers (claude/codex/gemini) in the background. Returns jobId immediately. Poll with omc_run_team_status.',
+        description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team start`.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -292,13 +400,14 @@ const TOOLS = [
                     description: 'Tasks to distribute to workers',
                 },
                 cwd: { type: 'string', description: 'Working directory (absolute path)' },
+                newWindow: { type: 'boolean', description: 'Spawn workers in a dedicated tmux window instead of splitting the current window' },
             },
             required: ['teamName', 'agentTypes', 'tasks', 'cwd'],
         },
     },
     {
         name: 'omc_run_team_status',
-        description: 'Non-blocking status check for a background omc_run_team job. Returns status and result when done.',
+        description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team status <job_id>`.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -309,7 +418,7 @@ const TOOLS = [
     },
     {
         name: 'omc_run_team_wait',
-        description: 'Block (poll internally) until a background omc_run_team job reaches a terminal state (completed or failed). Returns the result when done. One call instead of N polling calls. Uses exponential backoff (500ms → 2000ms). Auto-nudges idle teammate panes via tmux send-keys. If this wait call times out, workers are left running — call omc_run_team_wait again to keep waiting, or omc_run_team_cleanup to stop them explicitly.',
+        description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team wait <job_id>`.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -317,14 +426,14 @@ const TOOLS = [
                 timeout_ms: { type: 'number', description: 'Maximum wait time in ms (default: 300000, max: 3600000)' },
                 nudge_delay_ms: { type: 'number', description: 'Milliseconds a pane must be idle before nudging (default: 30000)' },
                 nudge_max_count: { type: 'number', description: 'Maximum nudges per pane (default: 3)' },
-                nudge_message: { type: 'string', description: 'Message sent as nudge (default: "Continue working on your assigned task.")' },
+                nudge_message: { type: 'string', description: 'Message sent as nudge (default: "Continue working on your assigned task and report concrete progress (not ACK-only).")' },
             },
             required: ['job_id'],
         },
     },
     {
         name: 'omc_run_team_cleanup',
-        description: 'Explicitly clean up worker panes when you want to stop workers. Kills all worker panes recorded for the job without touching the leader pane or the user session.',
+        description: '[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team cleanup <job_id>`.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -339,6 +448,9 @@ const server = new Server({ name: 'team', version: '1.0.0' }, { capabilities: { 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    if (isDeprecatedTeamToolName(name)) {
+        return createDeprecatedCliOnlyEnvelopeWithArgs(name, args);
+    }
     try {
         if (name === 'omc_run_team_start')
             return await handleStart(args ?? {});

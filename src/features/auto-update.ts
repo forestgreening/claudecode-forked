@@ -193,6 +193,7 @@ export function getOMCConfig(): OMCConfig {
       notificationProfiles: config.notificationProfiles,
       hudEnabled: config.hudEnabled,
       autoUpgradePrompt: config.autoUpgradePrompt,
+      nodeBinary: config.nodeBinary,
     };
   } catch {
     // If config file is invalid, default to disabled for security
@@ -449,7 +450,7 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
  * This is safe to run repeatedly and refreshes local runtime artifacts that may
  * lag behind an updated package or plugin cache.
  */
-export function reconcileUpdateRuntime(options?: { verbose?: boolean }): UpdateReconcileResult {
+export function reconcileUpdateRuntime(options?: { verbose?: boolean; skipGracePeriod?: boolean }): UpdateReconcileResult {
   const errors: string[] = [];
 
   const projectScopedPlugin = isProjectScopedPlugin();
@@ -483,7 +484,7 @@ export function reconcileUpdateRuntime(options?: { verbose?: boolean }): UpdateR
 
   // Purge stale plugin cache versions (non-fatal)
   try {
-    const purgeResult = purgeStalePluginCacheVersions();
+    const purgeResult = purgeStalePluginCacheVersions({ skipGracePeriod: options?.skipGracePeriod });
     if (purgeResult.removed > 0 && options?.verbose) {
       console.log(`[omc] Purged ${purgeResult.removed} stale plugin cache version(s)`);
     }
@@ -510,6 +511,36 @@ export function reconcileUpdateRuntime(options?: { verbose?: boolean }): UpdateR
   };
 }
 
+function getFirstResolvedBinaryPath(output: string): string {
+  const resolved = output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(Boolean);
+
+  if (!resolved) {
+    throw new Error('Unable to resolve omc binary path for update reconciliation');
+  }
+
+  return resolved;
+}
+
+function resolveOmcBinaryPath(): string {
+  if (process.platform === 'win32') {
+    return getFirstResolvedBinaryPath(execFileSync('where.exe', ['omc.cmd'], {
+      encoding: 'utf-8',
+      stdio: 'pipe',
+      timeout: 5000,
+      windowsHide: true,
+    }));
+  }
+
+  return getFirstResolvedBinaryPath(execSync('which omc 2>/dev/null || where omc 2>NUL', {
+    encoding: 'utf-8',
+    stdio: 'pipe',
+    timeout: 5000,
+  }));
+}
+
 /**
  * Download and execute the install script to perform an update
  */
@@ -517,6 +548,7 @@ export async function performUpdate(options?: {
   skipConfirmation?: boolean;
   verbose?: boolean;
   standalone?: boolean;
+  clean?: boolean;
 }): Promise<UpdateResult> {
   const installed = getInstalledVersion();
   const previousVersion = installed?.version ?? null;
@@ -559,18 +591,16 @@ export async function performUpdate(options?: {
         process.env.OMC_UPDATE_RECONCILE = '1';
 
         // Find the omc binary path
-        const omcPath = execSync('which omc 2>/dev/null || where omc 2>NUL', {
-          encoding: 'utf-8',
-          stdio: 'pipe',
-        }).trim().split('\n')[0];
+        const omcPath = resolveOmcBinaryPath();
 
         // Re-exec with reconcile subcommand
         try {
-          execFileSync(omcPath, ['update-reconcile'], {
+          execFileSync(omcPath, ['update-reconcile', ...(options?.clean ? ['--skip-grace-period'] : [])], {
             encoding: 'utf-8',
             stdio: options?.verbose ? 'inherit' : 'pipe',
             timeout: 60000,
-            env: { ...process.env, OMC_UPDATE_RECONCILE: '1' }
+            env: { ...process.env, OMC_UPDATE_RECONCILE: '1' },
+            ...(process.platform === 'win32' ? { windowsHide: true } : {}),
           });
         } catch (reconcileError) {
           return {
@@ -598,7 +628,7 @@ export async function performUpdate(options?: {
         };
       } else {
         // We're in the re-exec'd process - run reconciliation directly
-        const reconcileResult = reconcileUpdateRuntime({ verbose: options?.verbose });
+        const reconcileResult = reconcileUpdateRuntime({ verbose: options?.verbose, skipGracePeriod: options?.clean });
         if (!reconcileResult.success) {
           return {
             success: false,

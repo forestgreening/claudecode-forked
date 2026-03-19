@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { execSync } from "child_process";
@@ -9,6 +9,17 @@ import {
   type PersistentModeResult,
 } from "./index.js";
 import { activateUltrawork, deactivateUltrawork } from "../ultrawork/index.js";
+
+function writeTranscriptWithContext(filePath: string, contextWindow: number, inputTokens: number): void {
+  writeFileSync(
+    filePath,
+    `${JSON.stringify({
+      usage: { context_window: contextWindow, input_tokens: inputTokens },
+      context_window: contextWindow,
+      input_tokens: inputTokens,
+    })}\n`
+  );
+}
 
 describe("Stop Hook Blocking Contract", () => {
   describe("createHookOutput", () => {
@@ -167,6 +178,38 @@ describe("Stop Hook Blocking Contract", () => {
       expect(output.continue).toBe(true);
     });
 
+    it("allows stop for critical transcript context even with active autopilot", async () => {
+      const sessionId = "test-autopilot-critical-context";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      const transcriptPath = join(tempDir, "transcript.jsonl");
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "autopilot-state.json"),
+        JSON.stringify({
+          active: true,
+          phase: "execution",
+          session_id: sessionId,
+          iteration: 2,
+          max_iterations: 20,
+          reinforcement_count: 0,
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+      writeTranscriptWithContext(transcriptPath, 1000, 960);
+
+      const result = await checkPersistentModes(sessionId, tempDir, {
+        transcript_path: transcriptPath,
+        stop_reason: "end_turn",
+      });
+      expect(result.shouldBlock).toBe(false);
+      expect(result.mode).toBe("none");
+
+      const output = createHookOutput(result);
+      expect(output.continue).toBe(true);
+      expect(output.message).toBeUndefined();
+    });
+
     it("blocks stop for active ralph loop", async () => {
       const sessionId = "test-ralph-block";
       const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
@@ -253,7 +296,7 @@ describe("Stop Hook Blocking Contract", () => {
       rmSync(tempDir, { recursive: true, force: true });
     });
 
-    it("returns continue: false when ralph is active", () => {
+    it("returns decision: block when ralph is active", () => {
       const sessionId = "ralph-mjs-test";
       const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
       mkdirSync(sessionDir, { recursive: true });
@@ -271,11 +314,10 @@ describe("Stop Hook Blocking Contract", () => {
       );
 
       const output = runScript({ directory: tempDir, sessionId });
-      expect(output.continue).toBe(false);
       expect(output.decision).toBe("block");
     });
 
-    it("returns continue: false when ultrawork is active", () => {
+    it("returns decision: block when ultrawork is active", () => {
       const sessionId = "ultrawork-mjs-test";
       const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
       mkdirSync(sessionDir, { recursive: true });
@@ -292,7 +334,6 @@ describe("Stop Hook Blocking Contract", () => {
       );
 
       const output = runScript({ directory: tempDir, sessionId });
-      expect(output.continue).toBe(false);
       expect(output.decision).toBe("block");
     });
 
@@ -320,6 +361,34 @@ describe("Stop Hook Blocking Contract", () => {
       expect(output.continue).toBe(true);
     });
 
+    it("returns continue: true for critical transcript context when autopilot is active", () => {
+      const sessionId = "autopilot-critical-context-mjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      const transcriptPath = join(tempDir, "transcript.jsonl");
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "autopilot-state.json"),
+        JSON.stringify({
+          active: true,
+          phase: "execution",
+          session_id: sessionId,
+          reinforcement_count: 0,
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+      writeTranscriptWithContext(transcriptPath, 1000, 960);
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+        transcript_path: transcriptPath,
+        stop_reason: "end_turn",
+      });
+      expect(output.continue).toBe(true);
+      expect(output.decision).toBeUndefined();
+    });
+
     it("returns continue: true for user abort", () => {
       const sessionId = "abort-mjs";
       const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
@@ -344,8 +413,83 @@ describe("Stop Hook Blocking Contract", () => {
       expect(output.continue).toBe(true);
     });
 
+    it("returns continue: true for authentication error stop", () => {
+      const sessionId = "auth-error-mjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "ralph-state.json"),
+        JSON.stringify({
+          active: true,
+          iteration: 1,
+          max_iterations: 50,
+          session_id: sessionId,
+          started_at: new Date().toISOString(),
+          last_checked_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+        stop_reason: "oauth_expired",
+      });
+      expect(output.continue).toBe(true);
+    });
+
     it("returns continue: true when no modes are active", () => {
       const output = runScript({ directory: tempDir, sessionId: "no-modes" });
+      expect(output.continue).toBe(true);
+    });
+
+    it("fails open for missing/unknown Team phase in script", () => {
+      const sessionId = "team-phase-mjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+
+      writeFileSync(
+        join(sessionDir, "team-state.json"),
+        JSON.stringify({
+          active: true,
+          session_id: sessionId,
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+      const missingPhaseOutput = runScript({ directory: tempDir, sessionId });
+      expect(missingPhaseOutput.continue).toBe(true);
+
+      writeFileSync(
+        join(sessionDir, "team-state.json"),
+        JSON.stringify({
+          active: true,
+          session_id: sessionId,
+          current_phase: "phase-does-not-exist",
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+      const unknownPhaseOutput = runScript({ directory: tempDir, sessionId });
+      expect(unknownPhaseOutput.continue).toBe(true);
+    });
+
+    it("applies Team circuit breaker after max reinforcements in script", () => {
+      const sessionId = "team-breaker-mjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "team-state.json"),
+        JSON.stringify({
+          active: true,
+          session_id: sessionId,
+          current_phase: "team-exec",
+          reinforcement_count: 20,
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({ directory: tempDir, sessionId });
       expect(output.continue).toBe(true);
     });
 
@@ -365,6 +509,200 @@ describe("Stop Hook Blocking Contract", () => {
       );
 
       const output = runScript({ directory: tempDir, sessionId });
+      expect(output.continue).toBe(true);
+    });
+  });
+
+  describe("persistent-mode.cjs script blocking contract", () => {
+    let tempDir: string;
+    const scriptPath = join(process.cwd(), "scripts", "persistent-mode.cjs");
+
+    function runScript(input: Record<string, unknown>): Record<string, unknown> {
+      try {
+        const result = execSync(`node "${scriptPath}"`, {
+          encoding: "utf-8",
+          timeout: 5000,
+          input: JSON.stringify(input),
+          env: { ...process.env, NODE_ENV: "test" },
+        });
+        const lines = result.trim().split("\n");
+        return JSON.parse(lines[lines.length - 1]);
+      } catch (error: unknown) {
+        const execError = error as { stdout?: string };
+        if (execError.stdout) {
+          const lines = execError.stdout.trim().split("\n");
+          return JSON.parse(lines[lines.length - 1]);
+        }
+        throw error;
+      }
+    }
+
+    beforeEach(() => {
+      tempDir = mkdtempSync(join(tmpdir(), "stop-hook-cjs-test-"));
+      execSync("git init", { cwd: tempDir });
+    });
+
+    afterEach(() => {
+      rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("returns continue: true for authentication error stop", () => {
+      const sessionId = "auth-error-cjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "ralph-state.json"),
+        JSON.stringify({
+          active: true,
+          iteration: 1,
+          max_iterations: 50,
+          session_id: sessionId,
+          started_at: new Date().toISOString(),
+          last_checked_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+        stop_reason: "oauth_expired",
+      });
+      expect(output.continue).toBe(true);
+    });
+
+    it("returns continue: true for critical transcript context when autopilot is active", () => {
+      const sessionId = "autopilot-critical-context-cjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      const transcriptPath = join(tempDir, "transcript.jsonl");
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "autopilot-state.json"),
+        JSON.stringify({
+          active: true,
+          phase: "execution",
+          session_id: sessionId,
+          reinforcement_count: 0,
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+      writeTranscriptWithContext(transcriptPath, 1000, 960);
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+        transcript_path: transcriptPath,
+        stop_reason: "end_turn",
+      });
+      expect(output.continue).toBe(true);
+      expect(output.decision).toBeUndefined();
+    });
+
+
+    it("omits cancel guidance for legacy autopilot state without a session id in cjs script", () => {
+      const stateDir = join(tempDir, ".omc", "state");
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(
+        join(stateDir, "autopilot-state.json"),
+        JSON.stringify({
+          active: true,
+          phase: "execution",
+          reinforcement_count: 0,
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+      });
+
+      expect(output.decision).toBe("block");
+      expect(output.reason).toContain("AUTOPILOT");
+      expect(output.reason).not.toContain('/oh-my-claudecode:cancel');
+    });
+
+    it("fails open for unknown Team phase in cjs script", () => {
+      const sessionId = "team-phase-cjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "team-state.json"),
+        JSON.stringify({
+          active: true,
+          session_id: sessionId,
+          current_phase: "totally-unknown",
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+      });
+      expect(output.continue).toBe(true);
+    });
+
+    it("deactivates ultrawork state when max reinforcements reached", () => {
+      const sessionId = "ulw-max-reinforce-cjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      const statePath = join(sessionDir, "ultrawork-state.json");
+      writeFileSync(
+        statePath,
+        JSON.stringify({
+          active: true,
+          session_id: sessionId,
+          reinforcement_count: 51,
+          max_reinforcements: 50,
+          started_at: new Date().toISOString(),
+          last_checked_at: new Date().toISOString(),
+          project_path: tempDir,
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+      });
+      // Should allow stop
+      expect(output.continue).toBe(true);
+
+      // State should be deactivated
+      const updatedState = JSON.parse(readFileSync(statePath, "utf-8"));
+      expect(updatedState.active).toBe(false);
+      expect(updatedState.deactivated_reason).toBe("max_reinforcements_reached");
+    });
+
+    it("applies Team circuit breaker in cjs script", () => {
+      const sessionId = "team-breaker-cjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "team-state.json"),
+        JSON.stringify({
+          active: true,
+          session_id: sessionId,
+          current_phase: "team-exec",
+          reinforcement_count: 20,
+          last_checked_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+      );
+      // Priority 2.5 uses a separate stop-breaker file for circuit breaking
+      writeFileSync(
+        join(sessionDir, "team-pipeline-stop-breaker.json"),
+        JSON.stringify({
+          count: 21, // exceeds TEAM_PIPELINE_STOP_BLOCKER_MAX (20)
+          updated_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+      });
       expect(output.continue).toBe(true);
     });
   });

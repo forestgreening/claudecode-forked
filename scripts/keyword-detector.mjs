@@ -9,17 +9,18 @@
  * 1. cancelomc/stopomc: Stop active modes
  * 2. ralph: Persistence mode until task completion
  * 3. autopilot: Full autonomous execution
- * 4. team: Coordinated team execution (replaces ultrapilot/swarm)
+ * 4. team: Explicit-only via /team (not auto-triggered)
  * 5. ultrawork/ulw: Maximum parallel execution
- * 6. pipeline: Sequential agent chaining
- * 7. ccg: Claude-Codex-Gemini tri-model orchestration
- * 9. ralplan: Iterative planning with consensus
- * 10. plan: Planning interview mode
- * 11. tdd: Test-driven development
- * 12. research: Research orchestration
- * 13. ultrathink/think: Extended reasoning
- * 14. deepsearch: Codebase search (restricted patterns)
- * 15. analyze: Analysis mode (restricted patterns)
+ * 5. ccg: Claude-Codex-Gemini tri-model orchestration
+ * 6. ralplan: Iterative planning with consensus
+ * 7. deep interview: Socratic interview workflow
+ * 8. ai-slop-cleaner: Cleanup/deslop anti-slop workflow
+ * 9. tdd: Test-driven development
+ * 10. code review: Comprehensive review mode
+ * 11. security review: Security-focused review mode
+ * 12. ultrathink: Extended reasoning
+ * 13. deepsearch: Codebase search (restricted patterns)
+ * 14. analyze: Analysis mode (restricted patterns)
  */
 
 import { writeFileSync, readFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
@@ -44,6 +45,40 @@ Use your extended thinking capabilities to provide the most thorough and well-re
 ---
 `;
 
+const ANALYZE_MESSAGE = `<analyze-mode>
+ANALYSIS MODE. Gather context before diving deep:
+- Search relevant code paths first
+- Compare working vs broken behavior
+- Synthesize findings before proposing changes
+</analyze-mode>
+
+---
+`;
+
+const TDD_MESSAGE = `<tdd-mode>
+[TDD MODE ACTIVATED]
+Write or update tests first when practical, confirm they fail for the right reason, then implement the minimal fix and re-run verification.
+</tdd-mode>
+
+---
+`;
+
+const CODE_REVIEW_MESSAGE = `<code-review-mode>
+[CODE REVIEW MODE ACTIVATED]
+Perform a comprehensive code review of the relevant changes or target area. Focus on correctness, maintainability, edge cases, regressions, and test adequacy before recommending changes.
+</code-review-mode>
+
+---
+`;
+
+const SECURITY_REVIEW_MESSAGE = `<security-review-mode>
+[SECURITY REVIEW MODE ACTIVATED]
+Perform a focused security review of the relevant changes or target area. Check trust boundaries, auth/authz, data exposure, input validation, command/file access, secrets handling, and escalation risks before recommending changes.
+</security-review-mode>
+
+---
+`;
+
 // Extract prompt from various JSON structures
 function extractPrompt(input) {
   try {
@@ -64,6 +99,15 @@ function extractPrompt(input) {
 }
 
 // Sanitize text to prevent false positives from code blocks, XML tags, URLs, and file paths
+const ANTI_SLOP_EXPLICIT_PATTERN = /\b(ai[\s-]?slop|anti[\s-]?slop|deslop|de[\s-]?slop)\b/i;
+const ANTI_SLOP_ACTION_PATTERN = /\b(clean(?:\s*up)?|cleanup|refactor|simplify|dedupe|de-duplicate|prune)\b/i;
+const ANTI_SLOP_SMELL_PATTERN = /\b(slop|duplicate(?:d|s)?|duplication|dead\s+code|unused\s+code|over[\s-]?abstract(?:ion|ed)?|wrapper\s+layers?|boundary\s+violations?|needless\s+abstractions?|unnecessary\s+abstractions?|ai[\s-]?generated|generated\s+code|tech\s+debt)\b/i;
+
+function isAntiSlopCleanupRequest(text) {
+  return ANTI_SLOP_EXPLICIT_PATTERN.test(text) ||
+    (ANTI_SLOP_ACTION_PATTERN.test(text) && ANTI_SLOP_SMELL_PATTERN.test(text));
+}
+
 function sanitizeForKeywordDetection(text) {
   return text
     // 1. Strip XML-style tag blocks: <tag-name ...>...</tag-name> (multi-line, greedy on tag name)
@@ -83,14 +127,42 @@ function sanitizeForKeywordDetection(text) {
 
 // Create state file for a mode
 function activateState(directory, prompt, stateName, sessionId) {
-  const state = {
-    active: true,
-    started_at: new Date().toISOString(),
-    original_prompt: prompt,
-    session_id: sessionId || undefined,
-    reinforcement_count: 0,
-    last_checked_at: new Date().toISOString()
-  };
+  let state;
+
+  if (stateName === 'ralph') {
+    // Ralph needs specific fields for proper loop tracking
+    state = {
+      active: true,
+      iteration: 1,
+      max_iterations: 100,
+      started_at: new Date().toISOString(),
+      prompt: prompt,
+      session_id: sessionId || undefined,
+      project_path: directory,
+      linked_ultrawork: true,
+      last_checked_at: new Date().toISOString()
+    };
+  } else if (stateName === 'ralplan') {
+    // Ralplan needs active + session_id for stop-hook enforcement
+    state = {
+      active: true,
+      started_at: new Date().toISOString(),
+      session_id: sessionId || undefined,
+      project_path: directory,
+      last_checked_at: new Date().toISOString()
+    };
+  } else {
+    // Generic state for ultrawork, autopilot, etc.
+    state = {
+      active: true,
+      started_at: new Date().toISOString(),
+      original_prompt: prompt,
+      session_id: sessionId || undefined,
+      project_path: directory,
+      reinforcement_count: 0,
+      last_checked_at: new Date().toISOString()
+    };
+  }
 
   // Write to session-scoped path if sessionId available
   if (sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)) {
@@ -99,10 +171,10 @@ function activateState(directory, prompt, stateName, sessionId) {
       try { mkdirSync(sessionDir, { recursive: true }); } catch {}
     }
     try { writeFileSync(join(sessionDir, `${stateName}-state.json`), JSON.stringify(state, null, 2), { mode: 0o600 }); } catch {}
-    return; // Session-only write, skip legacy
+    return;
   }
 
-  // Fallback: write to legacy local .omc/state directory (no valid sessionId)
+  // Fallback: write to legacy local .omc/state directory
   const localDir = join(directory, '.omc', 'state');
   if (!existsSync(localDir)) {
     try { mkdirSync(localDir, { recursive: true }); } catch {}
@@ -258,22 +330,11 @@ function resolveConflicts(matches) {
   let resolved = [...matches];
 
 
-  // Team beats autopilot (legacy ultrapilot semantics)
-  if (names.includes('team') && names.includes('autopilot')) {
-    resolved = resolved.filter(m => m.name !== 'autopilot');
-  }
-
-  // Team beats ultrapilot (team is the canonical implementation)
-  if (names.includes('team') && names.includes('ultrapilot')) {
-    resolved = resolved.filter(m => m.name !== 'ultrapilot');
-  }
-
-  // Ralph + Team coexist (team-ralph linked mode)
-  // Both keywords are preserved so the skill can detect the composition.
+  // Team keyword detection removed — team is now explicit-only via /team skill.
 
   // Sort by priority order
-  const priorityOrder = ['cancel','ralph','autopilot','team','ultrawork',
-    'pipeline','ccg','ralplan','plan','tdd','research','ultrathink','deepsearch','analyze'];
+  const priorityOrder = ['cancel','ralph','autopilot','ultrawork',
+    'ccg','ralplan','deep-interview','ai-slop-cleaner','tdd','code-review','security-review','ultrathink','deepsearch','analyze'];
   resolved.sort((a, b) => priorityOrder.indexOf(a.name) - priorityOrder.indexOf(b.name));
 
   return resolved;
@@ -299,6 +360,13 @@ async function main() {
   const _skipHooks = (process.env.OMC_SKIP_HOOKS || '').split(',').map(s => s.trim());
   if (process.env.DISABLE_OMC === '1' || _skipHooks.includes('keyword-detector')) {
     console.log(JSON.stringify({ continue: true }));
+    return;
+  }
+
+  // Team worker guard: prevent keyword detection inside team workers to avoid
+  // infinite spawning loops (worker detects "team" -> invokes team skill -> spawns more workers)
+  if (process.env.OMC_TEAM_WORKER) {
+    console.log(JSON.stringify({ continue: true, suppressOutput: true }));
     return;
   }
 
@@ -346,14 +414,7 @@ async function main() {
       matches.push({ name: 'autopilot', args: '' });
     }
 
-    // Ultrapilot keywords (legacy names, routes to team via compatibility facade)
-    if (/\b(ultrapilot|ultra-pilot)\b/i.test(cleanPrompt) ||
-        /\bparallel\s+build\b/i.test(cleanPrompt) ||
-        /\bswarm\s+build\b/i.test(cleanPrompt) ||
-        /\bswarm\s+\d+\s+agents?\b/i.test(cleanPrompt) ||
-        /\bcoordinated\s+agents\b/i.test(cleanPrompt)) {
-      matches.push({ name: 'ultrapilot', args: '' });
-    }
+    // Ultrapilot keywords removed — routed to team which is now explicit-only (/team).
 
     // Ultrawork keywords
     if (/\b(ultrawork|ulw|uw)\b/i.test(cleanPrompt)) {
@@ -361,18 +422,9 @@ async function main() {
     }
 
 
-    // Team keywords (intent-gated to prevent false positives on bare "team")
-    // Uses negative lookbehind to exclude possessive/article contexts like "my team", "the team"
-    const hasTeamKeyword = /(?<!\b(?:my|the|our|a|his|her|their|its)\s)\bteam\b/i.test(cleanPrompt) ||
-      /\bcoordinated\s+team\b/i.test(cleanPrompt);
-    if (hasTeamKeyword && isTeamEnabled()) {
-      matches.push({ name: 'team', args: '' });
-    }
+    // Team keyword detection removed — team mode is now explicit-only via /team skill.
+    // This prevents infinite spawning when Claude workers receive prompts containing "team".
 
-    // Pipeline keywords
-    if (/\b(pipeline)\b/i.test(cleanPrompt) || /\bchain\s+agents\b/i.test(cleanPrompt)) {
-      matches.push({ name: 'pipeline', args: '' });
-    }
 
     // CCG keywords (Claude-Codex-Gemini tri-model orchestration)
     if (/\b(ccg|claude-codex-gemini)\b/i.test(cleanPrompt)) {
@@ -384,6 +436,16 @@ async function main() {
       matches.push({ name: 'ralplan', args: '' });
     }
 
+    // Deep interview keywords
+    if (/\b(deep[\s-]interview|ouroboros)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'deep-interview', args: '' });
+    }
+
+    // AI slop cleanup keywords
+    if (isAntiSlopCleanupRequest(cleanPrompt)) {
+      matches.push({ name: 'ai-slop-cleaner', args: '' });
+    }
+
     // TDD keywords
     if (/\b(tdd)\b/i.test(cleanPrompt) ||
         /\btest\s+first\b/i.test(cleanPrompt) ||
@@ -391,9 +453,14 @@ async function main() {
       matches.push({ name: 'tdd', args: '' });
     }
 
-    // Sciomc keywords
-    if (/\banalyze\s+data\b/i.test(cleanPrompt)) {
-      matches.push({ name: 'sciomc', args: '' });
+    // Code review keywords
+    if (/\b(code\s+review|review\s+code)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'code-review', args: '' });
+    }
+
+    // Security review keywords
+    if (/\b(security\s+review|review\s+security)\b/i.test(cleanPrompt)) {
+      matches.push({ name: 'security-review', args: '' });
     }
 
     // Ultrathink keywords
@@ -409,9 +476,7 @@ async function main() {
     }
 
     // Analyze keywords
-    if (/\b(deep\s*analyze)\b/i.test(cleanPrompt) ||
-        /\binvestigate\s+(the|this|why)\b/i.test(cleanPrompt) ||
-        /\bdebug\s+(the|this|why)\b/i.test(cleanPrompt)) {
+    if (/\b(deep[\s-]?analyze|deepanalyze)\b/i.test(cleanPrompt)) {
       matches.push({ name: 'analyze', args: '' });
     }
 
@@ -438,6 +503,42 @@ async function main() {
     let tracer = null;
     try { tracer = await import('../dist/hooks/subagent-tracker/flow-tracer.js'); } catch { /* silent */ }
 
+    // Import follow-up planner modules (best-effort — requires npm run build)
+    let followupPlanner = null;
+    let planningArtifacts = null;
+    try {
+      followupPlanner = await import('../dist/team/followup-planner.js');
+      planningArtifacts = await import('../dist/planning/artifacts.js');
+    } catch { /* silent — dist/ may not exist yet */ }
+
+    // Check for approved follow-up shortcut: bypass ralplan gate when a prior ralplan
+    // cycle completed and left an approved plan with a launch hint.
+    if (followupPlanner && planningArtifacts) {
+      // Detect if ralplan state exists (was recently active) — serves as "prior skill = ralplan" signal
+      const ralplanStatePath = sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)
+        ? join(directory, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json')
+        : join(directory, '.omc', 'state', 'ralplan-state.json');
+      const ralplanWasActive = existsSync(ralplanStatePath);
+
+      if (ralplanWasActive) {
+        const artifacts = planningArtifacts.readPlanningArtifacts(directory);
+        const planningComplete = planningArtifacts.isPlanningComplete(artifacts);
+        const context = { planningComplete, priorSkill: 'ralplan' };
+
+        const isTeamFollowup = followupPlanner.isApprovedExecutionFollowupShortcut('team', prompt, context);
+        const isRalphFollowup = followupPlanner.isApprovedExecutionFollowupShortcut('ralph', prompt, context);
+
+        if (isTeamFollowup) {
+          console.log(JSON.stringify(createHookOutput(createSkillInvocation('team', prompt))));
+          return;
+        }
+        if (isRalphFollowup) {
+          console.log(JSON.stringify(createHookOutput(createSkillInvocation('ralph', prompt))));
+          return;
+        }
+      }
+    }
+
     // Record detected keywords to flow trace
     if (tracer) {
       for (const match of resolved) {
@@ -447,13 +548,13 @@ async function main() {
 
     // Handle cancel specially - clear states and emit
     if (resolved.length > 0 && resolved[0].name === 'cancel') {
-      clearStateFiles(directory, ['ralph', 'autopilot', 'team', 'ultrawork', 'swarm', 'pipeline'], sessionId);
+      clearStateFiles(directory, ['ralph', 'autopilot', 'ultrawork', 'swarm', 'ralplan'], sessionId);
       console.log(JSON.stringify(createHookOutput(createSkillInvocation('cancel', prompt))));
       return;
     }
 
-    // Activate states for modes that need them
-    const stateModes = resolved.filter(m => ['ralph', 'autopilot', 'team', 'ultrawork'].includes(m.name));
+    // Activate states for modes that need them (team removed — explicit-only via /team skill)
+    const stateModes = resolved.filter(m => ['ralph', 'autopilot', 'ultrawork', 'ralplan'].includes(m.name));
     for (const mode of stateModes) {
       activateState(directory, prompt, mode.name, sessionId);
     }
@@ -468,37 +569,37 @@ async function main() {
     // Special: Ralph with ultrawork
     const hasRalph = resolved.some(m => m.name === 'ralph');
     const hasUltrawork = resolved.some(m => m.name === 'ultrawork');
-    const hasTeam = resolved.some(m => m.name === 'team');
     if (hasRalph && !hasUltrawork) {
       activateState(directory, prompt, 'ultrawork', sessionId);
     }
 
-    // Link ralph + team if both detected (team-ralph composition)
-    if (hasRalph && hasTeam) {
-      linkRalphTeam(directory, sessionId);
+    const additionalContextParts = [];
+    for (const [keywordName, message] of [
+      ['ultrathink', ULTRATHINK_MESSAGE],
+      ['analyze', ANALYZE_MESSAGE],
+      ['tdd', TDD_MESSAGE],
+      ['code-review', CODE_REVIEW_MESSAGE],
+      ['security-review', SECURITY_REVIEW_MESSAGE],
+    ]) {
+      const index = resolved.findIndex(m => m.name === keywordName);
+      if (index !== -1) {
+        resolved.splice(index, 1);
+        additionalContextParts.push(message);
+      }
     }
 
-    // Handle ultrathink specially - prepend message instead of skill invocation
-    const ultrathinkIndex = resolved.findIndex(m => m.name === 'ultrathink');
-    if (ultrathinkIndex !== -1) {
-      // Remove ultrathink from skill list
-      resolved.splice(ultrathinkIndex, 1);
-
-      // If ultrathink was the only match, emit message
-      if (resolved.length === 0) {
-        console.log(JSON.stringify(createHookOutput(ULTRATHINK_MESSAGE)));
-        return;
-      }
-
-      // Otherwise, prepend ultrathink message to skill invocation
-      const skillMessage = createMultiSkillInvocation(resolved, prompt);
-      console.log(JSON.stringify(createHookOutput(ULTRATHINK_MESSAGE + skillMessage)));
+    if (resolved.length === 0 && additionalContextParts.length > 0) {
+      console.log(JSON.stringify(createHookOutput(additionalContextParts.join(''))));
       return;
     }
 
-    const skillMatches = resolved;
-    if (skillMatches.length > 0) {
-      console.log(JSON.stringify(createHookOutput(createMultiSkillInvocation(skillMatches, prompt))));
+    if (resolved.length > 0) {
+      additionalContextParts.push(createMultiSkillInvocation(resolved, prompt));
+    }
+
+    if (additionalContextParts.length > 0) {
+      console.log(JSON.stringify(createHookOutput(additionalContextParts.join(''))));
+      return;
     }
   } catch (error) {
     // On any error, allow continuation

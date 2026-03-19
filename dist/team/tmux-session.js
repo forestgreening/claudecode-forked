@@ -6,6 +6,7 @@
  * Sessions are named "omc-team-{teamName}-{workerName}".
  */
 import { exec, execFile, execSync, execFileSync } from 'child_process';
+import { existsSync } from 'fs';
 import { join, basename, isAbsolute, win32 } from 'path';
 import { promisify } from 'util';
 import fs from 'fs/promises';
@@ -39,6 +40,62 @@ export function getDefaultShell() {
         return process.env.COMSPEC || 'cmd.exe';
     }
     return process.env.SHELL || '/bin/bash';
+}
+const ZSH_CANDIDATES = ['/bin/zsh', '/usr/bin/zsh', '/usr/local/bin/zsh', '/opt/homebrew/bin/zsh'];
+const BASH_CANDIDATES = ['/bin/bash', '/usr/bin/bash'];
+/** Try a list of shell paths; return first that exists with its rcFile, or null */
+export function resolveShellFromCandidates(paths, rcFile) {
+    for (const p of paths) {
+        if (existsSync(p))
+            return { shell: p, rcFile };
+    }
+    return null;
+}
+/** Check if shellPath is a supported shell (zsh/bash) that exists on disk */
+export function resolveSupportedShellAffinity(shellPath) {
+    if (!shellPath)
+        return null;
+    const name = basename(shellPath.replace(/\\/g, '/')).replace(/\.(exe|cmd|bat)$/i, '');
+    if (name !== 'zsh' && name !== 'bash')
+        return null;
+    if (!existsSync(shellPath))
+        return null;
+    const home = process.env.HOME ?? '';
+    const rcFile = home ? `${home}/.${name}rc` : null;
+    return { shell: shellPath, rcFile };
+}
+/**
+ * Resolve the shell and rc file to use for worker pane launch.
+ *
+ * Priority:
+ *   1. MSYS2/Windows → /bin/sh (no rcFile)
+ *   2. shellPath (from $SHELL) if zsh or bash and binary exists
+ *   3. ZSH candidates
+ *   4. BASH candidates
+ *   5. Fallback: /bin/sh
+ */
+export function buildWorkerLaunchSpec(shellPath) {
+    // MSYS2 / Windows: short-circuit to /bin/sh
+    if (isUnixLikeOnWindows()) {
+        return { shell: '/bin/sh', rcFile: null };
+    }
+    // Try user's preferred shell if it's supported (zsh or bash)
+    const preferred = resolveSupportedShellAffinity(shellPath);
+    if (preferred)
+        return preferred;
+    // Try zsh candidates
+    const home = process.env.HOME ?? '';
+    const zshRc = home ? `${home}/.zshrc` : null;
+    const zsh = resolveShellFromCandidates(ZSH_CANDIDATES, zshRc ?? '');
+    if (zsh)
+        return { shell: zsh.shell, rcFile: zshRc };
+    // Try bash candidates
+    const bashRc = home ? `${home}/.bashrc` : null;
+    const bash = resolveShellFromCandidates(BASH_CANDIDATES, bashRc ?? '');
+    if (bash)
+        return { shell: bash.shell, rcFile: bashRc };
+    // Final fallback
+    return { shell: '/bin/sh', rcFile: null };
 }
 function escapeForCmdSet(value) {
     return value.replace(/"/g, '""');
@@ -79,12 +136,19 @@ function getLaunchWords(config) {
         return [config.launchBinary, ...(config.launchArgs ?? [])];
     }
     if (config.launchCmd) {
+        if (config.launchCmd.trim().length === 0) {
+            throw new Error('Invalid launchCmd: value cannot be empty');
+        }
+        if (/[;&|`$()<>\n\r\t\0"\\]/.test(config.launchCmd)) {
+            throw new Error('Invalid launchCmd: contains dangerous shell metacharacters');
+        }
         return [config.launchCmd];
     }
     throw new Error('Missing worker launch command. Provide launchBinary or launchCmd.');
 }
 export function buildWorkerStartCommand(config) {
     const shell = getDefaultShell();
+    const launchSpec = buildWorkerLaunchSpec(process.env.SHELL);
     const launchWords = getLaunchWords(config);
     const shouldSourceRc = process.env.OMC_TEAM_NO_RC !== '1';
     if (process.platform === 'win32' && !isUnixLikeOnWindows()) {
@@ -106,19 +170,39 @@ export function buildWorkerStartCommand(config) {
             return `${key}=${shellEscape(value)}`;
         });
         const shellName = shellNameFromPath(shell) || 'bash';
-        const rcFile = process.env.HOME ? `${process.env.HOME}/.${shellName}rc` : '';
-        const script = shouldSourceRc && rcFile
-            ? `[ -f ${shellEscape(rcFile)} ] && . ${shellEscape(rcFile)}; exec "$@"`
-            : 'exec "$@"';
+        const isFish = shellName === 'fish';
+        const execArgsCommand = isFish ? 'exec $argv' : 'exec "$@"';
+        // Use rcFile from launchSpec when shell matches; fall back to legacy derivation otherwise
+        let rcFile = (launchSpec.shell === shell ? launchSpec.rcFile : null) ?? '';
+        if (!rcFile && process.env.HOME) {
+            rcFile = isFish
+                ? `${process.env.HOME}/.config/fish/config.fish`
+                : `${process.env.HOME}/.${shellName}rc`;
+        }
+        let script;
+        if (isFish) {
+            // Fish uses different syntax for conditionals and sourcing
+            script = shouldSourceRc && rcFile
+                ? `test -f ${shellEscape(rcFile)}; and source ${shellEscape(rcFile)}; ${execArgsCommand}`
+                : execArgsCommand;
+        }
+        else {
+            script = shouldSourceRc && rcFile
+                ? `[ -f ${shellEscape(rcFile)} ] && . ${shellEscape(rcFile)}; ${execArgsCommand}`
+                : execArgsCommand;
+        }
+        // Fish doesn't support combined -lc; use separate -l -c flags
+        const shellFlags = isFish ? ['-l', '-c'] : ['-lc'];
+        // envAssignments are already shell-escaped (KEY='value'), so they must
+        // NOT go through shellEscape again — that would wrap them in a second
+        // layer of quotes, causing `env` to receive literal quote characters
+        // in the values (e.g. ANTHROPIC_MODEL="'us.anthropic...'" instead of
+        // ANTHROPIC_MODEL="us.anthropic..."). Issue #1415.
         return [
-            'env',
+            shellEscape('env'),
             ...envAssignments,
-            shell,
-            '-lc',
-            script,
-            '--',
-            ...launchWords,
-        ].map(shellEscape).join(' ');
+            ...[shell, ...shellFlags, script, '--', ...launchWords].map(shellEscape),
+        ].join(' ');
     }
     const envString = Object.entries(config.envVars)
         .map(([k, v]) => {
@@ -127,9 +211,20 @@ export function buildWorkerStartCommand(config) {
     })
         .join(' ');
     const shellName = shellNameFromPath(shell) || 'bash';
-    const rcFile = process.env.HOME ? `${process.env.HOME}/.${shellName}rc` : '';
-    // Quote rcFile to prevent shell injection if HOME contains metacharacters
-    const sourceCmd = shouldSourceRc && rcFile ? `[ -f "${rcFile}" ] && source "${rcFile}"; ` : '';
+    const isFish = shellName === 'fish';
+    // Use rcFile from launchSpec when shell matches; fall back to legacy derivation otherwise
+    let rcFile = (launchSpec.shell === shell ? launchSpec.rcFile : null) ?? '';
+    if (!rcFile && process.env.HOME) {
+        rcFile = isFish
+            ? `${process.env.HOME}/.config/fish/config.fish`
+            : `${process.env.HOME}/.${shellName}rc`;
+    }
+    let sourceCmd = '';
+    if (shouldSourceRc && rcFile) {
+        sourceCmd = isFish
+            ? `test -f "${rcFile}"; and source "${rcFile}"; `
+            : `[ -f "${rcFile}" ] && source "${rcFile}"; `;
+    }
     return `env ${envString} ${shell} -c "${sourceCmd}exec ${launchWords[0]}"`;
 }
 /** Validate tmux is available. Throws with install instructions if not. */
@@ -142,7 +237,8 @@ export function validateTmux() {
             '  macOS: brew install tmux\n' +
             '  Ubuntu/Debian: sudo apt-get install tmux\n' +
             '  Fedora: sudo dnf install tmux\n' +
-            '  Arch: sudo pacman -S tmux');
+            '  Arch: sudo pacman -S tmux\n' +
+            '  Windows: winget install psmux');
     }
 }
 /** Sanitize name to prevent tmux command injection (alphanum + hyphen only) */
@@ -228,27 +324,34 @@ export function spawnBridgeInSession(tmuxSession, bridgeScriptPath, configFilePa
     const cmd = `node "${bridgeScriptPath}" --config "${configFilePath}"`;
     execFileSync('tmux', ['send-keys', '-t', tmuxSession, cmd, 'Enter'], { stdio: 'pipe', timeout: 5000 });
 }
+function buildTeamWindowName(teamName) {
+    return (`omc-${sanitizeName(teamName)}`).slice(0, 32) || 'omc-team';
+}
 /**
- * Create a tmux session with split-pane topology for a team.
+ * Create a tmux team topology for a team leader/worker layout.
  *
  * Must be run inside an existing tmux session ($TMUX must be set).
- * Creates splits in the CURRENT window so panes appear immediately
- * in the user's view. Returns sessionName in "session:window" form.
+ * By default, creates splits in the CURRENT window so panes appear immediately
+ * in the user's view. When options.newWindow is true, creates a detached
+ * dedicated tmux window first and then splits worker panes there.
+ * Returns sessionName in "session:window" form.
  *
  * Layout: leader pane on the left, worker panes stacked vertically on the right.
  * IMPORTANT: Uses pane IDs (%N format) not pane indices for stable targeting.
  */
-export async function createTeamSession(teamName, workerCount, cwd) {
+export async function createTeamSession(teamName, workerCount, cwd, options = {}) {
     const { execFile } = await import('child_process');
     const { promisify } = await import('util');
     const execFileAsync = promisify(execFile);
     const inTmux = Boolean(process.env.TMUX);
+    const useDedicatedWindow = Boolean(options.newWindow && inTmux);
     // Prefer the invoking pane from environment to avoid focus races when users
     // switch tmux windows during startup (issue #966).
     const envPaneIdRaw = (process.env.TMUX_PANE ?? '').trim();
     const envPaneId = /^%\d+$/.test(envPaneIdRaw) ? envPaneIdRaw : '';
     let sessionAndWindow = '';
     let leaderPaneId = envPaneId;
+    let sessionMode = inTmux ? 'split-pane' : 'detached-session';
     if (!inTmux) {
         // Backward-compatible fallback: create an isolated detached tmux session
         // so workflows can run when launched outside an attached tmux client.
@@ -269,7 +372,7 @@ export async function createTeamSession(teamName, workerCount, cwd) {
     if (inTmux && envPaneId) {
         try {
             const targetedContextResult = await execFileAsync('tmux', [
-                'display-message', '-p', '-t', envPaneId, '#S:#I'
+                'display-message', '-p', '-t', envPaneId, '#S:#I',
             ]);
             sessionAndWindow = targetedContextResult.stdout.trim();
         }
@@ -281,7 +384,7 @@ export async function createTeamSession(teamName, workerCount, cwd) {
     if (!sessionAndWindow || !leaderPaneId) {
         // Fallback when TMUX_PANE is unavailable/invalid.
         const contextResult = await tmuxAsync([
-            'display-message', '-p', '#S:#I #{pane_id}'
+            'display-message', '-p', '#S:#I #{pane_id}',
         ]);
         const contextLine = contextResult.stdout.trim();
         const contextMatch = contextLine.match(/^(\S+)\s+(%\d+)$/);
@@ -291,28 +394,45 @@ export async function createTeamSession(teamName, workerCount, cwd) {
         sessionAndWindow = contextMatch[1];
         leaderPaneId = contextMatch[2];
     }
+    if (useDedicatedWindow) {
+        const targetSession = sessionAndWindow.split(':')[0] ?? sessionAndWindow;
+        const windowName = `omc-${sanitizeName(teamName)}`.slice(0, 32);
+        const newWindowResult = await execFileAsync('tmux', [
+            'new-window', '-d', '-P', '-F', '#S:#I #{pane_id}',
+            '-t', targetSession,
+            '-n', windowName,
+            '-c', cwd,
+        ]);
+        const newWindowLine = newWindowResult.stdout.trim();
+        const newWindowMatch = newWindowLine.match(/^(\S+)\s+(%\d+)$/);
+        if (!newWindowMatch) {
+            throw new Error(`Failed to create team tmux window: "${newWindowLine}"`);
+        }
+        sessionAndWindow = newWindowMatch[1];
+        leaderPaneId = newWindowMatch[2];
+        sessionMode = 'dedicated-window';
+    }
     const teamTarget = sessionAndWindow; // "session:window" form
-    // Extract bare session name (before ':') for options that don't accept window targets
     const resolvedSessionName = teamTarget.split(':')[0];
     const workerPaneIds = [];
     if (workerCount <= 0) {
-        // Leader-only topology: no worker panes yet (spawned on demand later).
         try {
             await execFileAsync('tmux', ['set-option', '-t', resolvedSessionName, 'mouse', 'on']);
         }
         catch { /* ignore */ }
-        try {
-            await execFileAsync('tmux', ['select-pane', '-t', leaderPaneId]);
+        if (sessionMode !== 'dedicated-window') {
+            try {
+                await execFileAsync('tmux', ['select-pane', '-t', leaderPaneId]);
+            }
+            catch { /* ignore */ }
         }
-        catch { /* ignore */ }
         await new Promise(r => setTimeout(r, 300));
-        return { sessionName: teamTarget, leaderPaneId, workerPaneIds };
+        return { sessionName: teamTarget, leaderPaneId, workerPaneIds, sessionMode };
     }
-    // Create worker panes: first via horizontal split off leader, rest stacked vertically on right
+    // Create worker panes: first via horizontal split off leader, rest stacked vertically on right.
     for (let i = 0; i < workerCount; i++) {
         const splitTarget = i === 0 ? leaderPaneId : workerPaneIds[i - 1];
         const splitType = i === 0 ? '-h' : '-v';
-        // -d: don't switch focus to new pane; -P -F: print new pane ID directly
         const splitResult = await tmuxAsync([
             'split-window', splitType, '-t', splitTarget,
             '-d', '-P', '-F', '#{pane_id}',
@@ -323,17 +443,15 @@ export async function createTeamSession(teamName, workerCount, cwd) {
             workerPaneIds.push(paneId);
         }
     }
-    // Apply main-vertical layout to balance the panes
     try {
         await execFileAsync('tmux', ['select-layout', '-t', teamTarget, 'main-vertical']);
     }
     catch {
-        // Layout may not apply if only 1 pane; ignore
+        // Layout may not apply if only 1 pane; ignore.
     }
-    // Set leader pane to half the window width
     try {
         const widthResult = await tmuxAsync([
-            'display-message', '-p', '-t', teamTarget, '#{window_width}'
+            'display-message', '-p', '-t', teamTarget, '#{window_width}',
         ]);
         const width = parseInt(widthResult.stdout.trim(), 10);
         if (Number.isFinite(width) && width >= 40) {
@@ -343,21 +461,22 @@ export async function createTeamSession(teamName, workerCount, cwd) {
         }
     }
     catch { /* ignore layout sizing errors */ }
-    // Enable mouse mode so user can click/scroll panes
     try {
         await execFileAsync('tmux', ['set-option', '-t', resolvedSessionName, 'mouse', 'on']);
     }
     catch { /* ignore */ }
-    // Return focus to leader pane
-    try {
-        await execFileAsync('tmux', ['select-pane', '-t', leaderPaneId]);
+    if (sessionMode !== 'dedicated-window') {
+        try {
+            await execFileAsync('tmux', ['select-pane', '-t', leaderPaneId]);
+        }
+        catch { /* ignore */ }
     }
-    catch { /* ignore */ }
     await new Promise(r => setTimeout(r, 300));
-    return { sessionName: teamTarget, leaderPaneId, workerPaneIds };
+    return { sessionName: teamTarget, leaderPaneId, workerPaneIds, sessionMode };
 }
 /**
  * Spawn a CLI agent in a specific pane.
+
  * Worker startup: env OMC_TEAM_WORKER={teamName}/workerName shell -lc "exec agentCmd"
  */
 export async function spawnWorkerInPane(sessionName, paneId, config) {
@@ -391,28 +510,46 @@ function paneHasTrustPrompt(captured) {
     const hasChoices = tail.some(l => /Yes,\s*continue|No,\s*quit|Press enter to continue/i.test(l));
     return hasQuestion && hasChoices;
 }
+function paneIsBootstrapping(captured) {
+    const lines = captured
+        .split('\n')
+        .map((line) => line.replace(/\r/g, '').trim())
+        .filter((line) => line.length > 0);
+    return lines.some((line) => /\b(loading|initializing|starting up)\b/i.test(line)
+        || /\bmodel:\s*loading\b/i.test(line)
+        || /\bconnecting\s+to\b/i.test(line));
+}
 export function paneHasActiveTask(captured) {
     const lines = captured.split('\n').map(l => l.replace(/\r/g, '').trim()).filter(l => l.length > 0);
     const tail = lines.slice(-40);
+    if (tail.some(l => /\b\d+\s+background terminal running\b/i.test(l)))
+        return true;
     if (tail.some(l => /esc to interrupt/i.test(l)))
         return true;
     if (tail.some(l => /\bbackground terminal running\b/i.test(l)))
         return true;
+    if (tail.some(l => /^[·✻]\s+[A-Za-z][A-Za-z0-9''-]*(?:\s+[A-Za-z][A-Za-z0-9''-]*){0,3}(?:…|\.{3})$/u.test(l)))
+        return true;
     return false;
 }
 export function paneLooksReady(captured) {
-    const lines = captured
+    const content = captured.trimEnd();
+    if (content === '')
+        return false;
+    const lines = content
         .split('\n')
-        .map(line => line.replace(/\r/g, '').trim())
-        .filter(line => line.length > 0);
+        .map(line => line.replace(/\r/g, '').trimEnd())
+        .filter(line => line.trim() !== '');
     if (lines.length === 0)
         return false;
-    const tail = lines.slice(-20);
-    const hasPrompt = tail.some(line => /^\s*[›>❯]\s*/u.test(line));
-    if (hasPrompt)
+    if (paneIsBootstrapping(content))
+        return false;
+    const lastLine = lines[lines.length - 1];
+    if (/^\s*[›>❯]\s*/u.test(lastLine))
         return true;
-    const hasCodexHint = tail.some(line => /\bgpt-[\w.-]+\b/i.test(line) || /\b\d+% left\b/i.test(line));
-    return hasCodexHint;
+    const hasCodexPromptLine = lines.some((line) => /^\s*›\s*/u.test(line));
+    const hasClaudePromptLine = lines.some((line) => /^\s*❯\s*/u.test(line));
+    return hasCodexPromptLine || hasClaudePromptLine;
 }
 export async function waitForPaneReady(paneId, opts = {}) {
     const envTimeout = Number.parseInt(process.env.OMC_SHELL_READY_TIMEOUT_MS ?? '', 10);
@@ -447,7 +584,7 @@ async function paneInCopyMode(paneId, execFileAsync) {
     }
 }
 export function shouldAttemptAdaptiveRetry(args) {
-    if (process.env.OMX_TEAM_AUTO_INTERRUPT_RETRY === '0')
+    if (process.env.OMC_TEAM_AUTO_INTERRUPT_RETRY === '0')
         return false;
     if (args.retriesAttempted >= 1)
         return false;
@@ -630,7 +767,10 @@ export async function killWorkerPanes(opts) {
     const shutdownPath = join(cwd, '.omc', 'state', 'team', teamName, 'shutdown.json');
     try {
         await fs.writeFile(shutdownPath, JSON.stringify({ requestedAt: Date.now() }));
-        await sleep(graceMs);
+        const aliveChecks = await Promise.all(paneIds.map(id => isWorkerAlive(id)));
+        if (aliveChecks.some(alive => alive)) {
+            await sleep(graceMs);
+        }
     }
     catch { /* sentinel write failure is non-fatal */ }
     // 2. Force-kill each worker pane, guarding leader
@@ -647,22 +787,22 @@ export async function killWorkerPanes(opts) {
     }
 }
 /**
- * Kill the team tmux session or just the worker panes (split-pane mode).
+ * Kill the team tmux session or just the worker panes, depending on how the
+ * team was created.
  *
- * When sessionName contains ':' (split-pane mode, "session:window" form),
- * only the worker panes are killed — the leader pane and the user's session
- * are left intact. leaderPaneId is never killed.
- *
- * When sessionName does not contain ':', the entire session is killed.
+ * - split-pane: kill only worker panes; preserve the leader pane and user window.
+ * - dedicated-window: kill the owned tmux window.
+ * - detached-session: kill the fully owned tmux session.
  */
-export async function killTeamSession(sessionName, workerPaneIds, leaderPaneId) {
+export async function killTeamSession(sessionName, workerPaneIds, leaderPaneId, options = {}) {
     const { execFile } = await import('child_process');
     const { promisify } = await import('util');
     const execFileAsync = promisify(execFile);
-    if (sessionName.includes(':')) {
-        // Split-pane mode: kill ONLY worker panes, never kill-session
+    const sessionMode = options.sessionMode
+        ?? (sessionName.includes(':') ? 'split-pane' : 'detached-session');
+    if (sessionMode === 'split-pane') {
         if (!workerPaneIds?.length)
-            return; // no-op guard
+            return;
         for (const id of workerPaneIds) {
             if (id === leaderPaneId)
                 continue;
@@ -673,12 +813,33 @@ export async function killTeamSession(sessionName, workerPaneIds, leaderPaneId) 
         }
         return;
     }
-    // Session mode: this session is fully owned by the team
+    if (sessionMode === 'dedicated-window') {
+        try {
+            await execFileAsync('tmux', ['kill-window', '-t', sessionName]);
+        }
+        catch {
+            // Window may already be gone.
+        }
+        return;
+    }
+    const sessionTarget = sessionName.split(':')[0] ?? sessionName;
+    if (process.env.OMC_TEAM_ALLOW_KILL_CURRENT_SESSION !== '1' && process.env.TMUX) {
+        try {
+            const current = await tmuxAsync(['display-message', '-p', '#S']);
+            const currentSessionName = current.stdout.trim();
+            if (currentSessionName && currentSessionName === sessionTarget) {
+                return;
+            }
+        }
+        catch {
+            // If we cannot resolve current session safely, continue with best effort.
+        }
+    }
     try {
-        await execFileAsync('tmux', ['kill-session', '-t', sessionName]);
+        await execFileAsync('tmux', ['kill-session', '-t', sessionTarget]);
     }
     catch {
-        // Session may already be dead
+        // Session may already be dead.
     }
 }
 //# sourceMappingURL=tmux-session.js.map
