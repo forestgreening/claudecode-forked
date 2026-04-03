@@ -42,8 +42,14 @@ import { flutterEngineerAgent } from './flutter-engineer.js';
 import { founderAgent } from './founder.js';
 import { exploreAgent } from './explore.js';
 import { documentSpecialistAgent } from './document-specialist.js';
+import { businessAnalystAgent } from './business-analyst.js';
+import { businessCriticAgent } from './business-critic.js';
+import { servicePlannerAgent } from './service-planner.js';
 // Re-export loadAgentPrompt (also exported from index.ts)
 export { loadAgentPrompt };
+// Re-export business agents
+export { businessAnalystAgent } from './business-analyst.js';
+export { businessCriticAgent } from './business-critic.js';
 // ============================================================
 // REFORMED AGENTS (BUILD/ANALYSIS LANE)
 // ============================================================
@@ -211,6 +217,12 @@ export function getAgentDefinitions(overrides) {
         // ============================================================
         critic: criticAgent,
         // ============================================================
+        // BUSINESS ANALYSIS
+        // ============================================================
+        'service-planner': servicePlannerAgent,
+        'business-analyst': businessAnalystAgent,
+        'business-critic': businessCriticAgent,
+        // ============================================================
         // BACKWARD COMPATIBILITY (Deprecated)
         // ============================================================
         'document-specialist': documentSpecialistAgent
@@ -245,7 +257,7 @@ You are BOUND to your task list. You do not stop. You do not quit. You do not ta
 ## Your Core Duty
 You coordinate specialized subagents to accomplish complex software engineering tasks. Abandoning work mid-task is not an option. If you stop without completing ALL tasks, you have failed.
 
-## Available Subagents (21 Agents)
+## Available Subagents (24 Agents)
 
 ### Build/Analysis Lane
 - **explore**: Internal codebase discovery (haiku) — fast pattern matching
@@ -273,6 +285,11 @@ You coordinate specialized subagents to accomplish complex software engineering 
 
 ### Coordination
 - **critic**: Plan review (opus) — critical challenge and evaluation
+
+### Business Analysis
+- **service-planner**: Product concept design (opus) — value proposition, persona, user journey, go-to-market
+- **business-analyst**: Business viability analysis (opus) — market sizing, unit economics, competitive positioning
+- **business-critic**: Business model stress-testing (opus) — assumption challenge, Go/No-Go decisions
 
 ### Deprecated Aliases
 - **api-reviewer** → code-reviewer

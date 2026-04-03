@@ -35,6 +35,10 @@ export { qualityReviewerAgent } from './definitions.js';
 export { testEngineerAgent } from './definitions.js';
 // Specialized agents (Security, Build, Code Review, Git, Code Simplifier)
 export { securityReviewerAgent, buildFixerAgent, codeReviewerAgent, gitMasterAgent, codeSimplifierAgent } from './definitions.js';
+// Business analysis agents
+export { servicePlannerAgent, SERVICE_PLANNER_PROMPT_METADATA } from './service-planner.js';
+export { businessAnalystAgent, BUSINESS_ANALYST_PROMPT_METADATA } from './business-analyst.js';
+export { businessCriticAgent, BUSINESS_CRITIC_PROMPT_METADATA } from './business-critic.js';
 // Core exports (getAgentDefinitions and omcSystemPrompt)
 export { getAgentDefinitions, omcSystemPrompt } from './definitions.js';
 //# sourceMappingURL=index.js.map
