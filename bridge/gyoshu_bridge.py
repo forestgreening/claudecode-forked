@@ -41,6 +41,9 @@ from typing import Any, Dict, List, Optional, Callable, Tuple
 # =============================================================================
 
 JSON_RPC_VERSION = "2.0"
+PARENT_WATCH_INTERVAL_S = max(
+    float(os.environ.get("OMC_PARENT_POLL_INTERVAL_MS", "1000")) / 1000.0, 0.25
+)
 
 # JSON-RPC 2.0 Error Codes
 ERROR_PARSE = -32700  # Invalid JSON
@@ -293,6 +296,79 @@ def clean_memory() -> Dict[str, float]:
 
 
 # =============================================================================
+# SANDBOX MODE
+# =============================================================================
+
+# Modules blocked in sandbox mode (system access, process spawning, networking).
+# Note: sys, io, pathlib are intentionally blocked despite limiting some legitimate
+# REPL usage — this is an acceptable tradeoff for defense-in-depth. This blocklist
+# is not a security boundary on its own; OS-level isolation is recommended for
+# untrusted code. The blocklist prevents common bypass patterns within the sandbox.
+SANDBOX_BLOCKED_MODULES = frozenset(
+    {
+        "os",
+        "subprocess",
+        "shutil",
+        "socket",
+        "ctypes",
+        "multiprocessing",
+        "webbrowser",
+        "http.server",
+        "xmlrpc.server",
+        # Bypass prevention
+        "importlib",    # Prevents importlib.import_module('os') bypass
+        "sys",          # Prevents sys.modules direct access bypass
+        "io",           # Prevents file I/O bypass (complements open() block)
+        "pathlib",      # Prevents filesystem access via Path objects
+        "signal",       # Prevents signal handler manipulation
+    }
+)
+
+# Builtins removed in sandbox mode
+SANDBOX_BLOCKED_BUILTINS = frozenset(
+    {"exec", "eval", "compile", "__import__", "open", "breakpoint"}
+)
+
+_sandbox_enabled = os.environ.get("OMC_PYTHON_SANDBOX") == "1"
+_original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+
+def _sandbox_import(name, *args, **kwargs):
+    """Import hook that blocks dangerous modules in sandbox mode."""
+    top_level = name.split(".")[0]
+    if top_level in SANDBOX_BLOCKED_MODULES or name in SANDBOX_BLOCKED_MODULES:
+        raise ImportError(
+            f"Module '{name}' is blocked in sandbox mode. "
+            f"Disable sandbox via security.pythonSandbox in .claude/omc.jsonc or unset OMC_SECURITY."
+        )
+    # Check fromlist for dotted-module blocklist entries (e.g. "from http import server")
+    # __import__ signature: __import__(name, globals, locals, fromlist, level)
+    fromlist = (args[2] if len(args) > 2 else kwargs.get("fromlist")) or ()
+    for attr in fromlist:
+        qualified = f"{name}.{attr}"
+        if qualified in SANDBOX_BLOCKED_MODULES:
+            raise ImportError(
+                f"Module '{qualified}' is blocked in sandbox mode. "
+                f"Disable sandbox via security.pythonSandbox in .claude/omc.jsonc or unset OMC_SECURITY."
+            )
+    return _original_import(name, *args, **kwargs)
+
+
+def get_sandbox_namespace() -> Dict[str, Any]:
+    """Build a restricted builtins dict for sandbox mode."""
+    import builtins as _builtins_mod
+
+    safe_builtins = {
+        k: v
+        for k, v in vars(_builtins_mod).items()
+        if k not in SANDBOX_BLOCKED_BUILTINS
+    }
+    # Replace __import__ with the blocking version
+    safe_builtins["__import__"] = _sandbox_import
+    return {"__builtins__": safe_builtins}
+
+
+# =============================================================================
 # EXECUTION STATE
 # =============================================================================
 
@@ -317,6 +393,9 @@ class ExecutionState:
             "clean_memory": clean_memory,
             "get_memory": get_memory_usage,
         }
+        # Apply sandbox restrictions if enabled
+        if _sandbox_enabled:
+            self._namespace.update(get_sandbox_namespace())
 
     def reset(self) -> Dict[str, Any]:
         """Clear namespace and reset state."""
@@ -731,6 +810,20 @@ def _get_port_file(socket_path: str) -> str:
     return os.path.join(os.path.dirname(socket_path), "bridge.port")
 
 
+def _get_expected_parent_pid() -> Optional[int]:
+    """Return the expected parent PID provided by the spawning Node process."""
+    raw_value = os.environ.get("OMC_PARENT_PID")
+    if not raw_value:
+        return None
+
+    try:
+        parent_pid = int(raw_value)
+    except ValueError:
+        return None
+
+    return parent_pid if parent_pid > 1 else None
+
+
 def _bind_unix(server: socket_module.socket, socket_path: str) -> None:
     """Bind a Unix socket with umask and post-bind security checks."""
     safe_unlink_socket(socket_path)
@@ -767,10 +860,13 @@ def run_socket_server(socket_path: str) -> None:
     global _protocol_out
 
     port_file: Optional[str] = None
+    stop_event = threading.Event()
+    expected_parent_pid = _get_expected_parent_pid()
 
     if HAS_AF_UNIX:
         server = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
         _bind_unix(server, socket_path)
+        server.settimeout(PARENT_WATCH_INTERVAL_S)
         server.listen(1)
         print(
             f"[gyoshu_bridge] Socket server started at {socket_path}, PID={os.getpid()}",
@@ -780,6 +876,7 @@ def run_socket_server(socket_path: str) -> None:
         # TCP localhost fallback (Windows / platforms without AF_UNIX)
         server = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_STREAM)
         server.setsockopt(socket_module.SOL_SOCKET, socket_module.SO_REUSEADDR, 1)
+        server.settimeout(PARENT_WATCH_INTERVAL_S)
         server.bind(("127.0.0.1", 0))
         port = server.getsockname()[1]
         server.listen(1)
@@ -793,33 +890,57 @@ def run_socket_server(socket_path: str) -> None:
 
     sys.stderr.flush()
 
-    def shutdown_handler(signum, frame):
-        print("[gyoshu_bridge] Shutdown signal received", file=sys.stderr)
+    def request_shutdown(message: str) -> None:
+        if stop_event.is_set():
+            return
+        stop_event.set()
+        print(message, file=sys.stderr)
         sys.stderr.flush()
-        server.close()
-        if HAS_AF_UNIX:
-            safe_unlink_socket(socket_path)
-        elif port_file:
-            try:
-                os.unlink(port_file)
-            except OSError:
-                pass
-        sys.exit(0)
+
+        try:
+            server.close()
+        except OSError:
+            pass
+
+    def shutdown_handler(signum, frame):
+        request_shutdown("[gyoshu_bridge] Shutdown signal received")
 
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
 
+    if expected_parent_pid is not None:
+
+        def watch_parent() -> None:
+            while not stop_event.wait(PARENT_WATCH_INTERVAL_S):
+                current_parent_pid = os.getppid()
+                if current_parent_pid <= 1 or current_parent_pid != expected_parent_pid:
+                    request_shutdown(
+                        "[gyoshu_bridge] Parent process exited; shutting down bridge"
+                    )
+                    return
+
+        parent_watch = threading.Thread(target=watch_parent, daemon=True)
+        parent_watch.start()
+
     try:
-        while True:
-            conn, addr = server.accept()
+        while not stop_event.is_set():
+            try:
+                conn, addr = server.accept()
+            except socket_module.timeout:
+                continue
+            except OSError:
+                if stop_event.is_set():
+                    break
+                raise
             # TCP security: only accept connections from localhost
             if not HAS_AF_UNIX and addr and addr[0] != "127.0.0.1":
                 conn.close()
                 continue
             handle_socket_connection(conn)
     except Exception as e:
-        print(f"[gyoshu_bridge] Server error: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
+        if not stop_event.is_set():
+            print(f"[gyoshu_bridge] Server error: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
     finally:
         server.close()
         if HAS_AF_UNIX:

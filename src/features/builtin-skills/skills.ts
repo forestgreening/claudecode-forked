@@ -10,18 +10,45 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import type { BuiltinSkill } from './types.js';
 import { parseFrontmatter, parseFrontmatterAliases } from '../../utils/frontmatter.js';
+import { rewriteOmcCliInvocations } from '../../utils/omc-cli-rendering.js';
 import { parseSkillPipelineMetadata, renderSkillPipelineGuidance } from '../../utils/skill-pipeline.js';
+import { renderSkillResourcesGuidance } from '../../utils/skill-resources.js';
 import { renderSkillRuntimeGuidance } from './runtime-guidance.js';
+import { isSkininthegamebrosUser } from '../../utils/skininthegamebros-user.js';
 
-// Get the project root directory (go up from src/features/builtin-skills/)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PROJECT_ROOT = join(__dirname, '..', '..', '..');
-const SKILLS_DIR = join(PROJECT_ROOT, 'skills');
+function getPackageDir(): string {
+  if (typeof __dirname !== 'undefined' && __dirname) {
+    const currentDirName = basename(__dirname);
+    const parentDirName = basename(dirname(__dirname));
+    const grandparentDirName = basename(dirname(dirname(__dirname)));
+
+    if (currentDirName === 'bridge') {
+      return join(__dirname, '..');
+    }
+
+    if (
+      currentDirName === 'builtin-skills'
+      && parentDirName === 'features'
+      && (grandparentDirName === 'src' || grandparentDirName === 'dist')
+    ) {
+      return join(__dirname, '..', '..', '..');
+    }
+  }
+
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    return join(__dirname, '..', '..', '..');
+  } catch {
+    return process.cwd();
+  }
+}
+
+const SKILLS_DIR = join(getPackageDir(), 'skills');
 
 /**
  * Claude Code native commands that must not be shadowed by OMC skill short names.
@@ -41,6 +68,13 @@ const CC_NATIVE_COMMANDS = new Set([
   'memory',
 ]);
 
+const SKININTHEGAMEBROS_ONLY_SKILLS = new Set([
+  'remember',
+  'verify',
+  'debug',
+  'skillify',
+]);
+
 function toSafeSkillName(name: string): string {
   const normalized = name.trim();
   return CC_NATIVE_COMMANDS.has(normalized.toLowerCase())
@@ -58,10 +92,12 @@ function loadSkillFromFile(skillPath: string, skillName: string): BuiltinSkill[]
     const resolvedName = metadata.name || skillName;
     const safePrimaryName = toSafeSkillName(resolvedName);
     const pipeline = parseSkillPipelineMetadata(metadata);
+    const renderedBody = rewriteOmcCliInvocations(body.trim());
     const template = [
-      body.trim(),
+      renderedBody,
       renderSkillRuntimeGuidance(safePrimaryName),
       renderSkillPipelineGuidance(safePrimaryName, pipeline),
+      renderSkillResourcesGuidance(skillPath),
     ].filter((section) => section.trim().length > 0).join('\n\n');
 
     const safeAliases = Array.from(
@@ -121,6 +157,9 @@ function loadSkillsFromDirectory(): BuiltinSkill[] {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      if (SKININTHEGAMEBROS_ONLY_SKILLS.has(entry.name) && !isSkininthegamebrosUser()) {
+        continue;
+      }
 
       const skillPath = join(SKILLS_DIR, entry.name, 'SKILL.md');
       if (existsSync(skillPath)) {

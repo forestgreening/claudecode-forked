@@ -1,7 +1,7 @@
+import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { readFile, readdir, rm } from 'fs/promises';
-import { homedir } from 'os';
+import { readFile, rm } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { executeTeamApiOperation as executeCanonicalTeamApiOperation, resolveTeamApiOperation } from '../team/api-interop.js';
@@ -10,7 +10,9 @@ import { killWorkerPanes, killTeamSession } from '../team/tmux-session.js';
 import { validateTeamName } from '../team/team-name.js';
 import { monitorTeam, resumeTeam, shutdownTeam } from '../team/runtime.js';
 import { readTeamConfig } from '../team/monitor.js';
-const JOB_ID_PATTERN = /^omc-[a-z0-9]{1,12}$/;
+import { isProcessAlive } from '../platform/index.js';
+import { getGlobalOmcStatePath } from '../utils/paths.js';
+const JOB_ID_PATTERN = /^omc-[a-z0-9]{1,16}$/;
 const VALID_CLI_AGENT_TYPES = new Set(['claude', 'codex', 'gemini']);
 const SUBCOMMANDS = new Set(['start', 'status', 'wait', 'cleanup', 'resume', 'shutdown', 'api', 'help', '--help', '-h']);
 const SUPPORTED_API_OPERATIONS = new Set([
@@ -66,7 +68,7 @@ async function assertTeamSpawnAllowed(cwd, env = process.env) {
     }
 }
 function resolveJobsDir(env = process.env) {
-    return env.OMC_JOBS_DIR || join(homedir(), '.omc', 'team-jobs');
+    return env.OMC_JOBS_DIR || getGlobalOmcStatePath('team-jobs');
 }
 function resolveRuntimeCliPath(env = process.env) {
     if (env.OMC_RUNTIME_CLI_PATH) {
@@ -118,15 +120,6 @@ function writeJobToDisk(jobId, job, jobsDir) {
     ensureJobsDir(jobsDir);
     writeFileSync(jobPath(jobsDir, jobId), JSON.stringify(job), 'utf-8');
 }
-function isPidAlive(pid) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
 function parseJobResult(raw) {
     if (!raw)
         return undefined;
@@ -142,8 +135,8 @@ function buildStatus(jobId, job) {
         stderr: job.stderr,
     };
 }
-function generateJobId(now = Date.now()) {
-    return `omc-${now.toString(36)}`;
+export function generateJobId(now = Date.now()) {
+    return `omc-${now.toString(36)}${randomUUID().slice(0, 8)}`;
 }
 function convergeWithResultArtifact(jobId, job, jobsDir) {
     try {
@@ -160,7 +153,7 @@ function convergeWithResultArtifact(jobId, job, jobsDir) {
     catch {
         // no artifact yet
     }
-    if (job.status === 'running' && job.pid != null && !isPidAlive(job.pid)) {
+    if (job.status === 'running' && job.pid != null && !isProcessAlive(job.pid)) {
         return {
             ...job,
             status: 'failed',
@@ -208,36 +201,6 @@ function parseJsonInput(inputRaw) {
         throw new Error('Invalid --input JSON payload');
     }
     return parsed;
-}
-function readInputString(input, ...keys) {
-    for (const key of keys) {
-        const value = input[key];
-        if (typeof value === 'string' && value.trim()) {
-            return value.trim();
-        }
-    }
-    return '';
-}
-async function readTaskFiles(cwd, teamName) {
-    const tasksDir = join(teamStateRoot(cwd, teamName), 'tasks');
-    let files = [];
-    try {
-        files = (await readdir(tasksDir)).filter((f) => f.endsWith('.json'));
-    }
-    catch {
-        return [];
-    }
-    const loaded = await Promise.all(files.map(async (file) => {
-        try {
-            const raw = await readFile(join(tasksDir, file), 'utf-8');
-            const parsed = parseJsonSafe(raw);
-            return parsed ?? null;
-        }
-        catch {
-            return null;
-        }
-    }));
-    return loaded.filter((v) => v !== null);
 }
 export async function startTeamJob(input) {
     await assertTeamSpawnAllowed(input.cwd);
@@ -391,7 +354,9 @@ export async function teamStatusByTeamName(teamName, cwd = process.cwd()) {
             running: true,
             sessionName: config?.tmux_session,
             leaderPaneId: config?.leader_pane_id,
-            workerPaneIds: (config?.workers ?? []).map((worker) => worker.pane_id).filter((paneId) => typeof paneId === 'string'),
+            workerPaneIds: Array.from(new Set((config?.workers ?? [])
+                .map((worker) => worker.pane_id)
+                .filter((paneId) => typeof paneId === 'string' && paneId.trim().length > 0))),
             snapshot,
         };
     }

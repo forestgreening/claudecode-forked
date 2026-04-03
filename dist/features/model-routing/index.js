@@ -28,12 +28,13 @@ export { DEFAULT_ROUTING_RULES, evaluateRules, getMatchingRules, createRule, mer
 export { routeTask, routeWithEscalation, getRoutingRecommendation, getModelForTask, analyzeTaskComplexity, escalateModel, canEscalate, explainRouting, quickTierForAgent, } from './router.js';
 // Re-export prompt adaptations
 export { adaptPromptForTier, getPromptStrategy, getPromptPrefix, getPromptSuffix, createDelegationPrompt, getTaskInstructions, TIER_TASK_INSTRUCTIONS, } from './prompts/index.js';
+// Local imports for routeAndAdaptTask convenience function
+import { routeWithEscalation } from './router.js';
+import { adaptPromptForTier } from './prompts/index.js';
 /**
  * Convenience function to route and adapt prompt in one call
  */
 export function routeAndAdaptTask(taskPrompt, agentType, previousFailures) {
-    const { routeWithEscalation } = require('./router.js');
-    const { adaptPromptForTier } = require('./prompts/index.js');
     const decision = routeWithEscalation({
         taskPrompt,
         agentType,

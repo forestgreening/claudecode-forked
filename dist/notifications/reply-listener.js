@@ -18,14 +18,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, chmodSync, statSync, appendFileSync, renameSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
-import { homedir } from 'os';
 import { spawn } from 'child_process';
 import { request as httpsRequest } from 'https';
 import { resolveDaemonModulePath } from '../utils/daemon-module-path.js';
+import { getGlobalOmcStateRoot } from '../utils/paths.js';
 import { capturePaneContent, sendToPane, isTmuxAvailable, } from '../features/rate-limit-wait/tmux-detector.js';
-import { lookupByMessageId, loadAllMappings, removeMessagesByPane, pruneStale, } from './session-registry.js';
+import { lookupByMessageId, removeMessagesByPane, pruneStale, } from './session-registry.js';
 import { parseMentionAllowedMentions } from './config.js';
 import { redactTokens } from './redact.js';
+import { isProcessAlive } from '../platform/index.js';
 import { validateSlackMessage, } from './slack-socket.js';
 // ESM compatibility: __filename is not available in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -49,12 +50,12 @@ const DAEMON_ENV_ALLOWLIST = [
     'TMPDIR', 'TMP', 'TEMP',
     'XDG_RUNTIME_DIR', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME',
     'SHELL',
-    'NODE_ENV',
+    'NODE_ENV', 'NODE_EXTRA_CA_CERTS',
     'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy',
     'SystemRoot', 'SYSTEMROOT', 'windir', 'COMSPEC',
 ];
 /** Default paths */
-const DEFAULT_STATE_DIR = join(homedir(), '.omc', 'state');
+const DEFAULT_STATE_DIR = getGlobalOmcStateRoot();
 const PID_FILE_PATH = join(DEFAULT_STATE_DIR, 'reply-listener.pid');
 const STATE_FILE_PATH = join(DEFAULT_STATE_DIR, 'reply-listener-state.json');
 const LOG_FILE_PATH = join(DEFAULT_STATE_DIR, 'reply-listener.log');
@@ -206,18 +207,6 @@ function removePidFile() {
     }
 }
 /**
- * Check if a process is running
- */
-function isProcessRunning(pid) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-/**
  * Check if daemon is currently running
  */
 export function isDaemonRunning() {
@@ -225,7 +214,7 @@ export function isDaemonRunning() {
     if (pid === null) {
         return false;
     }
-    if (!isProcessRunning(pid)) {
+    if (!isProcessAlive(pid)) {
         removePidFile();
         return false;
     }
@@ -626,6 +615,15 @@ async function pollLoop() {
                     botToken: slackBotToken,
                     channelId: slackChannelId,
                 }, async (event) => {
+                    // Authorization: fail-closed — reject when no authorized users configured
+                    if (!config.authorizedSlackUserIds || config.authorizedSlackUserIds.length === 0) {
+                        log('WARN: No authorized Slack user IDs configured, rejecting all messages (fail-closed)');
+                        return;
+                    }
+                    if (!config.authorizedSlackUserIds.includes(event.user)) {
+                        log(`REJECTED Slack message from unauthorized user ${event.user}`);
+                        return;
+                    }
                     // Rate limiting
                     if (!rateLimiter.canProceed()) {
                         log(`WARN: Rate limit exceeded, dropping Slack message ${event.ts}`);
@@ -641,13 +639,8 @@ async function pollLoop() {
                             targetPaneId = mapping.tmuxPaneId;
                         }
                     }
-                    // No thread match: use most recent registered pane
-                    if (!targetPaneId) {
-                        const mappings = loadAllMappings();
-                        if (mappings.length > 0) {
-                            targetPaneId = mappings[mappings.length - 1].tmuxPaneId;
-                        }
-                    }
+                    // No thread match: skip injection to avoid sending to an unrelated session.
+                    // Discord and Telegram already skip when no match is found.
                     if (!targetPaneId) {
                         log('WARN: No target pane found for Slack message, skipping');
                         return;
@@ -824,7 +817,7 @@ export function stopReplyListener() {
             message: 'Reply listener daemon is not running',
         };
     }
-    if (!isProcessRunning(pid)) {
+    if (!isProcessAlive(pid)) {
         removePidFile();
         return {
             success: true,

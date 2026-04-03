@@ -101,6 +101,36 @@ describe('processHook - Routing Matrix', () => {
             expect(result.continue).toBe(true);
             expect(result.message).toContain('[SECURITY REVIEW MODE ACTIVATED]');
         });
+        it('injects prompt prerequisite reminder and state for execution prompts with declared sections', async () => {
+            const tempDir = process.cwd();
+            try {
+                const sessionId = 'keyword-prereq-session';
+                const result = await processHook('keyword-detector', {
+                    sessionId,
+                    prompt: `ralph fix the parser
+
+# MÉMOIRE
+Use notepad_read and project_memory_read first.
+
+# VERIFY-FIRST
+Read src/hooks/bridge.ts before editing.`,
+                    directory: tempDir,
+                });
+                expect(result.continue).toBe(true);
+                expect(result.message).toContain('[BLOCKING PREREQUISITE GATE]');
+                expect(result.message).toContain('notepad_read');
+                expect(result.message).toContain('src/hooks/bridge.ts');
+                const prereqStatePath = join(process.cwd(), '.omc', 'state', 'sessions', sessionId, 'prompt-prerequisites-state.json');
+                expect(existsSync(prereqStatePath)).toBe(true);
+                const prereqState = JSON.parse(readFileSync(prereqStatePath, 'utf-8'));
+                expect(prereqState.active).toBe(true);
+                expect(prereqState.required_tool_calls).toEqual(['notepad_read', 'project_memory_read']);
+                expect(prereqState.required_file_paths).toEqual(['src/hooks/bridge.ts']);
+            }
+            finally {
+                rmSync(join(process.cwd(), '.omc', 'state', 'sessions', 'keyword-prereq-session'), { recursive: true, force: true });
+            }
+        });
         it('should handle keyword-detector with no keyword prompt', async () => {
             const input = {
                 sessionId: 'test-session',
@@ -111,6 +141,60 @@ describe('processHook - Routing Matrix', () => {
             expect(result.continue).toBe(true);
             // No keyword detected, so no message
             expect(result.message).toBeUndefined();
+        });
+        it('denies Edit until prompt prerequisites are completed, then unblocks after reads', async () => {
+            const tempDir = process.cwd();
+            try {
+                const sessionId = 'prereq-pretool-session';
+                await processHook('keyword-detector', {
+                    sessionId,
+                    prompt: `ultrawork fix it
+
+# MÉMOIRE
+Use notepad_read first.
+
+# CONTEXT
+Read src/hooks/bridge.ts first.`,
+                    directory: tempDir,
+                });
+                const denied = await processHook('pre-tool-use', {
+                    sessionId,
+                    toolName: 'Edit',
+                    toolInput: { file_path: 'src/hooks/bridge.ts' },
+                    directory: tempDir,
+                });
+                expect(denied.continue).toBe(true);
+                expect(denied.hookSpecificOutput).toBeDefined();
+                const denyHook = denied.hookSpecificOutput;
+                expect(denyHook.permissionDecision).toBe('deny');
+                expect(String(denyHook.permissionDecisionReason)).toContain('Blocking Edit');
+                const readStep = await processHook('pre-tool-use', {
+                    sessionId,
+                    toolName: 'Read',
+                    toolInput: { file_path: 'src/hooks/bridge.ts' },
+                    directory: tempDir,
+                });
+                expect(readStep.continue).toBe(true);
+                const toolStep = await processHook('pre-tool-use', {
+                    sessionId,
+                    toolName: 'mcp__omx_notepad__notepad_read',
+                    toolInput: {},
+                    directory: tempDir,
+                });
+                expect(toolStep.continue).toBe(true);
+                expect(String(toolStep.message ?? '')).toContain('PROMPT PREREQUISITES COMPLETE');
+                const allowed = await processHook('pre-tool-use', {
+                    sessionId,
+                    toolName: 'Edit',
+                    toolInput: { file_path: 'src/hooks/bridge.ts' },
+                    directory: tempDir,
+                });
+                expect(allowed.continue).toBe(true);
+                expect(allowed.hookSpecificOutput).toBeUndefined();
+            }
+            finally {
+                rmSync(join(process.cwd(), '.omc', 'state', 'sessions', 'prereq-pretool-session'), { recursive: true, force: true });
+            }
         });
         it('should handle pre-tool-use with Bash tool input', async () => {
             const input = {
@@ -132,6 +216,37 @@ describe('processHook - Routing Matrix', () => {
             };
             const result = await processHook('post-tool-use', input);
             expect(result.continue).toBe(true);
+        });
+        it('marks keyword-triggered ralph state as awaiting confirmation so stop enforcement stays inert', async () => {
+            const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-keyword-ralph-'));
+            try {
+                execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+                const sessionId = 'keyword-ralph-session';
+                const keywordResult = await processHook('keyword-detector', {
+                    sessionId,
+                    prompt: 'ralph fix the regression in src/hooks/bridge.ts after issue #1795 by tracing keyword-detector into persistent-mode, preserving session-scoped state behavior, verifying the confirmation gate, keeping linked ultrawork activation intact, adding a focused regression test for false-positive prose prompts, checking stop-hook enforcement only after real Skill invocation, and confirming the smallest safe fix without widening the mode activation surface or changing unrelated orchestration behavior in this worktree',
+                    directory: tempDir,
+                });
+                expect(keywordResult.continue).toBe(true);
+                expect(keywordResult.message).toContain('[RALPH + ULTRAWORK MODE ACTIVATED]');
+                const sessionDir = join(tempDir, '.omc', 'state', 'sessions', sessionId);
+                const ralphState = JSON.parse(readFileSync(join(sessionDir, 'ralph-state.json'), 'utf-8'));
+                const ultraworkState = JSON.parse(readFileSync(join(sessionDir, 'ultrawork-state.json'), 'utf-8'));
+                expect(ralphState.active).toBe(true);
+                expect(ralphState.awaiting_confirmation).toBe(true);
+                expect(ultraworkState.active).toBe(true);
+                expect(ultraworkState.awaiting_confirmation).toBe(true);
+                const stopResult = await processHook('persistent-mode', {
+                    sessionId,
+                    directory: tempDir,
+                    stop_reason: 'end_turn',
+                });
+                expect(stopResult.continue).toBe(true);
+                expect(stopResult.message).toBeUndefined();
+            }
+            finally {
+                rmSync(tempDir, { recursive: true, force: true });
+            }
         });
         it('should activate ralph and linked ultrawork when Skill tool invokes ralph', async () => {
             const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-ralph-'));
@@ -156,6 +271,105 @@ describe('processHook - Routing Matrix', () => {
                 expect(ralphState.linked_ultrawork).toBe(true);
                 expect(ultraworkState.active).toBe(true);
                 expect(ultraworkState.linked_to_ralph).toBe(true);
+            }
+            finally {
+                rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+        it('clears awaiting confirmation when Skill tool actually invokes ralph', async () => {
+            const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-confirm-ralph-'));
+            try {
+                execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+                const sessionId = 'confirm-ralph-session';
+                const sessionDir = join(tempDir, '.omc', 'state', 'sessions', sessionId);
+                mkdirSync(sessionDir, { recursive: true });
+                writeFileSync(join(sessionDir, 'ralph-state.json'), JSON.stringify({
+                    active: true,
+                    awaiting_confirmation: true,
+                    iteration: 1,
+                    max_iterations: 10,
+                    session_id: sessionId,
+                    started_at: new Date().toISOString(),
+                    last_checked_at: new Date().toISOString(),
+                    prompt: 'Test task',
+                }, null, 2));
+                writeFileSync(join(sessionDir, 'ultrawork-state.json'), JSON.stringify({
+                    active: true,
+                    awaiting_confirmation: true,
+                    started_at: new Date().toISOString(),
+                    original_prompt: 'Test task',
+                    session_id: sessionId,
+                    reinforcement_count: 0,
+                    last_checked_at: new Date().toISOString(),
+                }, null, 2));
+                const result = await processHook('pre-tool-use', {
+                    sessionId,
+                    toolName: 'Skill',
+                    toolInput: { skill: 'oh-my-claudecode:ralph' },
+                    directory: tempDir,
+                });
+                expect(result.continue).toBe(true);
+                const ralphState = JSON.parse(readFileSync(join(sessionDir, 'ralph-state.json'), 'utf-8'));
+                const ultraworkState = JSON.parse(readFileSync(join(sessionDir, 'ultrawork-state.json'), 'utf-8'));
+                expect(ralphState.awaiting_confirmation).toBeUndefined();
+                expect(ultraworkState.awaiting_confirmation).toBeUndefined();
+            }
+            finally {
+                rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+        it('activates ralplan state when Skill tool invokes ralplan directly', async () => {
+            const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-ralplan-skill-'));
+            try {
+                execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+                const sessionId = 'ralplan-skill-session';
+                const result = await processHook('pre-tool-use', {
+                    sessionId,
+                    toolName: 'Skill',
+                    toolInput: { skill: 'oh-my-claudecode:ralplan' },
+                    directory: tempDir,
+                });
+                expect(result.continue).toBe(true);
+                const ralplanPath = join(tempDir, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json');
+                expect(existsSync(ralplanPath)).toBe(true);
+                const ralplanState = JSON.parse(readFileSync(ralplanPath, 'utf-8'));
+                expect(ralplanState.active).toBe(true);
+                expect(ralplanState.session_id).toBe(sessionId);
+                expect(ralplanState.current_phase).toBe('ralplan');
+                expect(ralplanState.awaiting_confirmation).toBeUndefined();
+                const stopResult = await processHook('persistent-mode', {
+                    sessionId,
+                    directory: tempDir,
+                    stop_reason: 'end_turn',
+                });
+                expect(stopResult.continue).toBe(false);
+                expect(stopResult.message).toContain('ralplan-continuation');
+            }
+            finally {
+                rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+        it('activates ralplan state when Skill tool invokes omc-plan in consensus mode', async () => {
+            const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-plan-consensus-skill-'));
+            try {
+                execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+                const sessionId = 'plan-consensus-skill-session';
+                const result = await processHook('pre-tool-use', {
+                    sessionId,
+                    toolName: 'Skill',
+                    toolInput: {
+                        skill: 'oh-my-claudecode:omc-plan',
+                        args: '--consensus issue #1926',
+                    },
+                    directory: tempDir,
+                });
+                expect(result.continue).toBe(true);
+                const ralplanPath = join(tempDir, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json');
+                expect(existsSync(ralplanPath)).toBe(true);
+                const ralplanState = JSON.parse(readFileSync(ralplanPath, 'utf-8'));
+                expect(ralplanState.active).toBe(true);
+                expect(ralplanState.session_id).toBe(sessionId);
+                expect(ralplanState.current_phase).toBe('ralplan');
             }
             finally {
                 rmSync(tempDir, { recursive: true, force: true });

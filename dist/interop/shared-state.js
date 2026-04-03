@@ -10,6 +10,7 @@ import { join } from 'path';
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'fs';
 import { z } from 'zod';
 import { atomicWriteJsonSync } from '../lib/atomic-write.js';
+import { withFileLockSync } from '../lib/file-lock.js';
 // Zod schemas for runtime validation
 const InteropConfigSchema = z.object({
     sessionId: z.string(),
@@ -92,7 +93,7 @@ export function addSharedTask(cwd, task) {
     const interopDir = getInteropDir(cwd);
     const fullTask = {
         ...task,
-        id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        id: `task-${Date.now()}-${crypto.randomUUID().replace(/-/g, '').slice(0, 9)}`,
         createdAt: new Date().toISOString(),
         status: 'pending',
     };
@@ -147,22 +148,24 @@ export function updateSharedTask(cwd, taskId, updates) {
         return null;
     }
     try {
-        const content = readFileSync(taskPath, 'utf-8');
-        const parsed = SharedTaskSchema.safeParse(JSON.parse(content));
-        if (!parsed.success)
-            return null;
-        const task = parsed.data;
-        const updatedTask = {
-            ...task,
-            ...updates,
-        };
-        // Set completedAt if status changed to completed/failed
-        if ((updates.status === 'completed' || updates.status === 'failed') &&
-            !updatedTask.completedAt) {
-            updatedTask.completedAt = new Date().toISOString();
-        }
-        atomicWriteJsonSync(taskPath, updatedTask);
-        return updatedTask;
+        return withFileLockSync(taskPath + '.lock', () => {
+            const content = readFileSync(taskPath, 'utf-8');
+            const parsed = SharedTaskSchema.safeParse(JSON.parse(content));
+            if (!parsed.success)
+                return null;
+            const task = parsed.data;
+            const updatedTask = {
+                ...task,
+                ...updates,
+            };
+            // Set completedAt if status changed to completed/failed
+            if ((updates.status === 'completed' || updates.status === 'failed') &&
+                !updatedTask.completedAt) {
+                updatedTask.completedAt = new Date().toISOString();
+            }
+            atomicWriteJsonSync(taskPath, updatedTask);
+            return updatedTask;
+        });
     }
     catch {
         return null;
@@ -175,7 +178,7 @@ export function addSharedMessage(cwd, message) {
     const interopDir = getInteropDir(cwd);
     const fullMessage = {
         ...message,
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        id: `msg-${Date.now()}-${crypto.randomUUID().replace(/-/g, '').slice(0, 9)}`,
         timestamp: new Date().toISOString(),
         read: false,
     };

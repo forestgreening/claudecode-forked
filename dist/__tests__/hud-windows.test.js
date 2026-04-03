@@ -93,6 +93,25 @@ describe('HUD Windows Compatibility', () => {
             expect(sorted).toEqual(['1.0.10', '1.0.9', '1.0.2', '1.0.1']);
         });
     });
+    describe('safeMode override (#346)', () => {
+        it('safeMode logic: explicit false overrides platform detection', () => {
+            // Simulate the logic from src/hud/index.ts
+            const resolveSafeMode = (safeMode, isWin32) => safeMode !== false && (safeMode || isWin32);
+            // explicit false: disabled even on Windows
+            expect(resolveSafeMode(false, true)).toBe(false);
+            expect(resolveSafeMode(false, false)).toBe(false);
+            // explicit true: always enabled
+            expect(resolveSafeMode(true, false)).toBe(true);
+            expect(resolveSafeMode(true, true)).toBe(true);
+            // default true on Windows: enabled
+            expect(resolveSafeMode(true, true)).toBe(true);
+        });
+        it('hud index.ts should use explicit-false override for safeMode', () => {
+            const indexPath = join(packageRoot, 'src', 'hud', 'index.ts');
+            const content = readFileSync(indexPath, 'utf-8');
+            expect(content).toContain('config.elements.safeMode !== false');
+        });
+    });
     describe('Cross-Platform Plugin Cache Path (#670)', () => {
         it('getPluginCacheBase should return path with correct segments', () => {
             const cachePath = getPluginCacheBase();
@@ -135,6 +154,8 @@ describe('HUD Windows Compatibility', () => {
             expect(content).toContain("node -e");
             // Should use path.join for constructing paths
             expect(content).toContain("p.join(d,'plugins','cache','omc','oh-my-claudecode')");
+            expect(content).not.toContain('ls ~/.claude/CLAUDE-*.md');
+            expect(content).toContain("find \"$HOME/.claude\" -maxdepth 1 -type f -name 'CLAUDE-*.md' -print 2>/dev/null");
         });
         it('hud skill should use cross-platform Node.js commands for plugin detection', () => {
             const hudPath = join(packageRoot, 'skills', 'hud', 'SKILL.md');

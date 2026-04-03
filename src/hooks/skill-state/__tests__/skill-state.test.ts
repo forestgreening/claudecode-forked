@@ -20,6 +20,28 @@ function makeTempDir(): string {
   return tempDir;
 }
 
+function writeSubagentTrackingState(
+  tempDir: string,
+  agents: Array<Record<string, unknown>>,
+): void {
+  const stateDir = join(tempDir, '.omc', 'state');
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(
+    join(stateDir, 'subagent-tracking.json'),
+    JSON.stringify(
+      {
+        agents,
+        total_spawned: agents.length,
+        total_completed: agents.filter((agent) => agent.status === 'completed').length,
+        total_failed: agents.filter((agent) => agent.status === 'failed').length,
+        last_updated: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 describe('skill-state', () => {
   let tempDir: string;
 
@@ -84,6 +106,30 @@ describe('skill-state', () => {
     it('is case-insensitive', () => {
       expect(getSkillProtection('SKILL')).toBe('light');
       expect(getSkillProtection('Plan')).toBe('medium');
+    });
+
+    it('returns none for project custom skills with same name as OMC skills (issue #1581)', () => {
+      // rawSkillName without oh-my-claudecode: prefix → project custom skill
+      expect(getSkillProtection('plan', 'plan')).toBe('none');
+      expect(getSkillProtection('review', 'review')).toBe('none');
+      expect(getSkillProtection('tdd', 'tdd')).toBe('none');
+    });
+
+    it('returns protection for OMC skills when rawSkillName has prefix', () => {
+      expect(getSkillProtection('plan', 'oh-my-claudecode:plan')).toBe('medium');
+      expect(getSkillProtection('deepinit', 'oh-my-claudecode:deepinit')).toBe('heavy');
+    });
+
+    it('returns none for other plugin skills with rawSkillName', () => {
+      // ouroboros:plan, claude-mem:make-plan etc. should not get OMC protection
+      expect(getSkillProtection('plan', 'ouroboros:plan')).toBe('none');
+      expect(getSkillProtection('make-plan', 'claude-mem:make-plan')).toBe('none');
+    });
+
+    it('falls back to map lookup when rawSkillName is not provided', () => {
+      // Backward compatibility: no rawSkillName → use SKILL_PROTECTION map
+      expect(getSkillProtection('plan')).toBe('medium');
+      expect(getSkillProtection('deepinit')).toBe('heavy');
     });
   });
 
@@ -155,13 +201,70 @@ describe('skill-state', () => {
       expect(state!.skill_name).toBe('plan');
     });
 
-    it('overwrites existing state when new skill is invoked', () => {
+    it('does not write state for project custom skills with same name as OMC skills (issue #1581)', () => {
+      // rawSkillName='plan' (no prefix) → project custom skill → no state
+      const state = writeSkillActiveState(tempDir, 'plan', 'session-1', 'plan');
+      expect(state).toBeNull();
+      expect(readSkillActiveState(tempDir, 'session-1')).toBeNull();
+    });
+
+    it('writes state for OMC skills when rawSkillName has prefix', () => {
+      const state = writeSkillActiveState(tempDir, 'plan', 'session-1', 'oh-my-claudecode:plan');
+      expect(state).not.toBeNull();
+      expect(state!.skill_name).toBe('plan');
+      expect(state!.max_reinforcements).toBe(5);
+    });
+
+    it('does not overwrite when a different skill is already active (nesting guard)', () => {
       writeSkillActiveState(tempDir, 'plan', 'session-1');
       const state2 = writeSkillActiveState(tempDir, 'external-context', 'session-1');
-      expect(state2!.skill_name).toBe('external-context');
+      expect(state2).toBeNull();
 
       const readBack = readSkillActiveState(tempDir, 'session-1');
-      expect(readBack!.skill_name).toBe('external-context');
+      expect(readBack!.skill_name).toBe('plan');
+    });
+
+    it('allows re-invocation of the same skill', () => {
+      const state1 = writeSkillActiveState(tempDir, 'plan', 'session-1');
+      expect(state1).not.toBeNull();
+      expect(state1!.skill_name).toBe('plan');
+
+      const state2 = writeSkillActiveState(tempDir, 'plan', 'session-1');
+      expect(state2).not.toBeNull();
+      expect(state2!.skill_name).toBe('plan');
+
+      const readBack = readSkillActiveState(tempDir, 'session-1');
+      expect(readBack!.skill_name).toBe('plan');
+    });
+
+    it('does not overwrite when mcp-setup is invoked inside omc-setup (canonical nesting scenario)', () => {
+      writeSkillActiveState(tempDir, 'omc-setup', 'session-1');
+      const child = writeSkillActiveState(tempDir, 'mcp-setup', 'session-1');
+      expect(child).toBeNull();
+      expect(readSkillActiveState(tempDir, 'session-1')!.skill_name).toBe('omc-setup');
+    });
+
+    it('blocks triple nesting: third child cannot overwrite grandparent', () => {
+      writeSkillActiveState(tempDir, 'omc-setup', 'session-1');
+      writeSkillActiveState(tempDir, 'mcp-setup', 'session-1'); // blocked
+      const grandchild = writeSkillActiveState(tempDir, 'plan', 'session-1');
+      expect(grandchild).toBeNull();
+      expect(readSkillActiveState(tempDir, 'session-1')!.skill_name).toBe('omc-setup');
+    });
+
+    it('re-invocation resets reinforcement count', () => {
+      writeSkillActiveState(tempDir, 'plan', 'session-1');
+
+      // Simulate some reinforcement checks
+      checkSkillActiveState(tempDir, 'session-1');
+      checkSkillActiveState(tempDir, 'session-1');
+      const stateBeforeRefresh = readSkillActiveState(tempDir, 'session-1');
+      expect(stateBeforeRefresh!.reinforcement_count).toBe(2);
+
+      // Re-invoke same skill
+      writeSkillActiveState(tempDir, 'plan', 'session-1');
+      const stateAfterRefresh = readSkillActiveState(tempDir, 'session-1');
+      expect(stateAfterRefresh!.reinforcement_count).toBe(0);
     });
   });
 
@@ -338,6 +441,25 @@ describe('skill-state', () => {
       expect(result.shouldBlock).toBe(false);
     });
 
+    it('allows orchestrator idle while delegated subagents are still running', () => {
+      writeSkillActiveState(tempDir, 'plan', 'session-1');
+      writeSubagentTrackingState(tempDir, [
+        {
+          agent_id: 'agent-1',
+          agent_type: 'executor',
+          started_at: new Date().toISOString(),
+          parent_mode: 'none',
+          status: 'running',
+        },
+      ]);
+
+      const result = checkSkillActiveState(tempDir, 'session-1');
+      expect(result.shouldBlock).toBe(false);
+
+      const state = readSkillActiveState(tempDir, 'session-1');
+      expect(state?.reinforcement_count).toBe(0);
+    });
+
     it('clears stale state and allows stop', () => {
       writeSkillActiveState(tempDir, 'skill', 'session-1');
 
@@ -367,6 +489,62 @@ describe('skill-state', () => {
       const result = checkSkillActiveState(tempDir);
       expect(result.shouldBlock).toBe(true);
       expect(result.skillName).toBe('skill');
+    });
+
+    it('still blocks stop after a nested skill invocation was rejected', () => {
+      writeSkillActiveState(tempDir, 'plan', 'session-1');
+      writeSkillActiveState(tempDir, 'external-context', 'session-1'); // blocked
+
+      const result = checkSkillActiveState(tempDir, 'session-1');
+      expect(result.shouldBlock).toBe(true);
+      expect(result.skillName).toBe('plan');
+    });
+
+    it('nesting-aware clear: child completion preserves parent state, parent completion clears it', () => {
+      // Simulates the full omc-setup → mcp-setup lifecycle including
+      // the PostToolUse nesting-aware clear logic from bridge.ts:1828-1840.
+      //
+      // This is the direct verification for the PR test plan item:
+      // "Verify stop hook no longer blocks after omc-setup completes with nested mcp-setup"
+
+      // 1. Parent skill (omc-setup) starts
+      writeSkillActiveState(tempDir, 'omc-setup', 'session-1');
+      expect(readSkillActiveState(tempDir, 'session-1')!.skill_name).toBe('omc-setup');
+
+      // 2. Child skill (mcp-setup) starts — nesting guard blocks write
+      const childWrite = writeSkillActiveState(tempDir, 'mcp-setup', 'session-1');
+      expect(childWrite).toBeNull();
+
+      // 3. Child skill completes — simulate PostToolUse nesting-aware clear
+      //    bridge.ts logic: only clear if completing skill owns the state
+      const stateAfterChildDone = readSkillActiveState(tempDir, 'session-1');
+      const completingChild = 'mcp-setup';
+      if (!stateAfterChildDone || !stateAfterChildDone.active || stateAfterChildDone.skill_name === completingChild) {
+        clearSkillActiveState(tempDir, 'session-1');
+      }
+      // Parent state must survive — child does not own it
+      const parentState = readSkillActiveState(tempDir, 'session-1');
+      expect(parentState).not.toBeNull();
+      expect(parentState!.skill_name).toBe('omc-setup');
+      expect(parentState!.active).toBe(true);
+
+      // 4. Stop hook still blocks (parent is still active)
+      const stopCheck = checkSkillActiveState(tempDir, 'session-1');
+      expect(stopCheck.shouldBlock).toBe(true);
+      expect(stopCheck.skillName).toBe('omc-setup');
+
+      // 5. Parent skill completes — simulate PostToolUse nesting-aware clear
+      const stateAfterParentDone = readSkillActiveState(tempDir, 'session-1');
+      const completingParent = 'omc-setup';
+      if (!stateAfterParentDone || !stateAfterParentDone.active || stateAfterParentDone.skill_name === completingParent) {
+        clearSkillActiveState(tempDir, 'session-1');
+      }
+      // State must be cleared now
+      expect(readSkillActiveState(tempDir, 'session-1')).toBeNull();
+
+      // 6. Stop hook no longer blocks
+      const finalCheck = checkSkillActiveState(tempDir, 'session-1');
+      expect(finalCheck.shouldBlock).toBe(false);
     });
   });
 });

@@ -141,7 +141,7 @@ describe("startup context compaction", () => {
 
     try {
       const omcAgentsPath = join(tempDir, "AGENTS.md");
-      const omcGuidance = `# oh-my-codex - Intelligent Multi-Agent Orchestration
+      const omcGuidance = `# oh-my-claudecode - Intelligent Multi-Agent Orchestration
 
 <guidance_schema_contract>
 schema
@@ -216,6 +216,13 @@ describe("plan output configuration", () => {
     expect(config.planOutput).toEqual({
       directory: ".omc/plans",
       filenameTemplate: "{{name}}.md",
+    });
+  });
+
+  it("includes teleport defaults", () => {
+    const config = loadConfig();
+    expect(config.teleport).toEqual({
+      symlinkNodeModules: true,
     });
   });
 

@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -380,6 +380,136 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
 
     expect(output.continue).toBe(true);
     expect(output.decision).toBeUndefined();
+  });
+
+
+  it('clears awaiting confirmation from session-scoped mode state when a skill is invoked', () => {
+    const sessionId = 'session-confirm';
+    const sessionStateDir = join(tempDir, '.omc', 'state', 'sessions', sessionId);
+    mkdirSync(sessionStateDir, { recursive: true });
+    writeJson(join(sessionStateDir, 'ralph-state.json'), {
+      active: true,
+      awaiting_confirmation: true,
+      session_id: sessionId,
+    });
+    writeJson(join(sessionStateDir, 'ultrawork-state.json'), {
+      active: true,
+      awaiting_confirmation: true,
+      session_id: sessionId,
+    });
+
+    const output = runPreToolEnforcer({
+      tool_name: 'Skill',
+      toolInput: {
+        skill: 'oh-my-claudecode:ralph',
+      },
+      cwd: tempDir,
+      session_id: sessionId,
+    });
+
+    expect(output.continue).toBe(true);
+    expect((output.hookSpecificOutput as Record<string, unknown>).additionalContext).toContain(
+      'The boulder never stops',
+    );
+    expect(
+      JSON.parse(readFileSync(join(sessionStateDir, 'ralph-state.json'), 'utf-8')).awaiting_confirmation,
+    ).toBeUndefined();
+    expect(
+      JSON.parse(readFileSync(join(sessionStateDir, 'ultrawork-state.json'), 'utf-8')).awaiting_confirmation,
+    ).toBeUndefined();
+  });
+
+  // === Model routing / forceInherit tests (issue #1868 catch-22) ===
+
+  it('allows tier alias "sonnet" through when OMC_SUBAGENT_MODEL is set and forceInherit is enabled', () => {
+    const output = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Agent',
+        toolInput: { subagent_type: 'oh-my-claudecode:architect', model: 'sonnet' },
+        cwd: tempDir,
+        session_id: 'session-tier-alias',
+      },
+      {
+        OMC_ROUTING_FORCE_INHERIT: 'true',
+        OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+      },
+    );
+
+    // Tier alias + OMC_SUBAGENT_MODEL configured → allow through; Agent tool routes via OMC_SUBAGENT_MODEL
+    expect(output.continue).toBe(true);
+    expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+  });
+
+  it('blocks tier alias "sonnet" when OMC_SUBAGENT_MODEL is NOT set in forceInherit mode', () => {
+    const output = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Agent',
+        toolInput: { subagent_type: 'oh-my-claudecode:architect', model: 'sonnet' },
+        cwd: tempDir,
+        session_id: 'session-tier-alias-no-subagent',
+      },
+      {
+        OMC_ROUTING_FORCE_INHERIT: 'true',
+        OMC_SUBAGENT_MODEL: '',
+      },
+    );
+
+    const hookOutput = output.hookSpecificOutput as Record<string, unknown>;
+    expect(hookOutput.permissionDecisionReason as string).toContain('MODEL ROUTING');
+  });
+
+  it('blocks tier alias when OMC_SUBAGENT_MODEL is itself a bare Anthropic model ID', () => {
+    const output = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Agent',
+        toolInput: { subagent_type: 'oh-my-claudecode:executor', model: 'sonnet' },
+        cwd: tempDir,
+        session_id: 'session-tier-alias-bare',
+      },
+      {
+        OMC_ROUTING_FORCE_INHERIT: 'true',
+        OMC_SUBAGENT_MODEL: 'claude-sonnet-4-6',
+      },
+    );
+
+    const hookOutput = output.hookSpecificOutput as Record<string, unknown>;
+    expect(hookOutput.permissionDecisionReason as string).toContain('MODEL ROUTING');
+  });
+
+  it('blocks tier alias when OMC_SUBAGENT_MODEL has a [1m] extended-context suffix', () => {
+    const output = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Agent',
+        toolInput: { subagent_type: 'oh-my-claudecode:executor', model: 'opus' },
+        cwd: tempDir,
+        session_id: 'session-tier-alias-lm',
+      },
+      {
+        OMC_ROUTING_FORCE_INHERIT: 'true',
+        OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6[1m]',
+      },
+    );
+
+    const hookOutput = output.hookSpecificOutput as Record<string, unknown>;
+    expect(hookOutput.permissionDecisionReason as string).toContain('MODEL ROUTING');
+  });
+
+  it('still blocks bare Anthropic model ID even when OMC_SUBAGENT_MODEL is set', () => {
+    const output = runPreToolEnforcerWithEnv(
+      {
+        tool_name: 'Agent',
+        toolInput: { subagent_type: 'oh-my-claudecode:executor', model: 'claude-sonnet-4-6' },
+        cwd: tempDir,
+        session_id: 'session-bare-anthropic',
+      },
+      {
+        OMC_ROUTING_FORCE_INHERIT: 'true',
+        OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+      },
+    );
+
+    const hookOutput = output.hookSpecificOutput as Record<string, unknown>;
+    expect(hookOutput.permissionDecisionReason as string).toContain('MODEL ROUTING');
   });
 
   it('does not write skill-active-state for unknown custom skills', () => {

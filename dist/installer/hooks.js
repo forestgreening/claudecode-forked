@@ -11,6 +11,7 @@
 import { join, dirname } from "path";
 import { readFileSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
+import { homedir } from "os";
 import { getConfigDir } from '../utils/config-dir.js';
 // =============================================================================
 // TEMPLATE LOADER (loads hook scripts from templates/hooks/)
@@ -61,13 +62,6 @@ export const MIN_NODE_VERSION = 20;
 export function isWindows() {
     return process.platform === "win32";
 }
-/**
- * Check if Node.js hooks should be used.
- * @deprecated Always returns true. Bash hooks were removed in v3.9.0.
- */
-export function shouldUseNodeHooks() {
-    return true;
-}
 /** Get the Claude config directory path (cross-platform) */
 export function getClaudeConfigDir() {
     return getConfigDir();
@@ -82,6 +76,27 @@ export function getHooksDir() {
  */
 export function getHomeEnvVar() {
     return isWindows() ? "%USERPROFILE%" : "$HOME";
+}
+function normalizePath(value) {
+    return value.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+function isDefaultClaudeConfigDir() {
+    return normalizePath(getClaudeConfigDir()) === normalizePath(join(homedir(), '.claude'));
+}
+function quoteCommandPath(path) {
+    return `"${path.replace(/"/g, '\\"')}"`;
+}
+function buildHookCommand(filename) {
+    if (isWindows()) {
+        if (isDefaultClaudeConfigDir()) {
+            return `node "%USERPROFILE%\\\\.claude\\\\hooks\\\\${filename}"`;
+        }
+        return `node ${quoteCommandPath(join(getClaudeConfigDir(), 'hooks', filename))}`;
+    }
+    if (isDefaultClaudeConfigDir()) {
+        return `node "$HOME/.claude/hooks/${filename}"`;
+    }
+    return `node ${quoteCommandPath(join(getClaudeConfigDir(), 'hooks', filename).replace(/\\/g, '/'))}`;
 }
 /**
  * Ultrawork message - injected when ultrawork/ulw keyword detected
@@ -355,11 +370,7 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
                 hooks: [
                     {
                         type: "command",
-                        // Note: On Windows, %USERPROFILE% is expanded by cmd.exe
-                        // On Unix with node hooks, $HOME is expanded by the shell
-                        command: isWindows()
-                            ? 'node "%USERPROFILE%\\.claude\\hooks\\keyword-detector.mjs"'
-                            : 'node "$HOME/.claude/hooks/keyword-detector.mjs"',
+                        command: buildHookCommand('keyword-detector.mjs'),
                     },
                 ],
             },
@@ -369,9 +380,7 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
                 hooks: [
                     {
                         type: "command",
-                        command: isWindows()
-                            ? 'node "%USERPROFILE%\\.claude\\hooks\\session-start.mjs"'
-                            : 'node "$HOME/.claude/hooks/session-start.mjs"',
+                        command: buildHookCommand('session-start.mjs'),
                     },
                 ],
             },
@@ -381,9 +390,7 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
                 hooks: [
                     {
                         type: "command",
-                        command: isWindows()
-                            ? 'node "%USERPROFILE%\\.claude\\hooks\\pre-tool-use.mjs"'
-                            : 'node "$HOME/.claude/hooks/pre-tool-use.mjs"',
+                        command: buildHookCommand('pre-tool-use.mjs'),
                     },
                 ],
             },
@@ -393,9 +400,7 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
                 hooks: [
                     {
                         type: "command",
-                        command: isWindows()
-                            ? 'node "%USERPROFILE%\\.claude\\hooks\\post-tool-use.mjs"'
-                            : 'node "$HOME/.claude/hooks/post-tool-use.mjs"',
+                        command: buildHookCommand('post-tool-use.mjs'),
                     },
                 ],
             },
@@ -405,9 +410,7 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
                 hooks: [
                     {
                         type: "command",
-                        command: isWindows()
-                            ? 'node "%USERPROFILE%\\.claude\\hooks\\post-tool-use-failure.mjs"'
-                            : 'node "$HOME/.claude/hooks/post-tool-use-failure.mjs"',
+                        command: buildHookCommand('post-tool-use-failure.mjs'),
                     },
                 ],
             },
@@ -417,9 +420,7 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
                 hooks: [
                     {
                         type: "command",
-                        command: isWindows()
-                            ? 'node "%USERPROFILE%\\.claude\\hooks\\persistent-mode.mjs"'
-                            : 'node "$HOME/.claude/hooks/persistent-mode.mjs"',
+                        command: buildHookCommand('persistent-mode.mjs'),
                     },
                 ],
             },
@@ -427,9 +428,7 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
                 hooks: [
                     {
                         type: "command",
-                        command: isWindows()
-                            ? 'node "%USERPROFILE%\\.claude\\hooks\\code-simplifier.mjs"'
-                            : 'node "$HOME/.claude/hooks/code-simplifier.mjs"',
+                        command: buildHookCommand('code-simplifier.mjs'),
                     },
                 ],
             },
@@ -445,31 +444,5 @@ export const HOOKS_SETTINGS_CONFIG_NODE = {
  */
 export function getHooksSettingsConfig() {
     return HOOKS_SETTINGS_CONFIG_NODE;
-}
-// =============================================================================
-// HOOK SCRIPTS EXPORTS
-// =============================================================================
-/**
- * Get Node.js hook scripts (Cross-platform)
- * Returns a record of filename -> content for all Node.js hooks
- *
- * @deprecated Hook scripts are no longer installed to ~/.claude/hooks/.
- * All hooks are delivered via the plugin's hooks/hooks.json + scripts/.
- * Kept for test compatibility only.
- */
-export function getHookScripts() {
-    return {
-        "keyword-detector.mjs": loadTemplate("keyword-detector.mjs"),
-        "stop-continuation.mjs": loadTemplate("stop-continuation.mjs"),
-        "persistent-mode.mjs": loadTemplate("persistent-mode.mjs"),
-        "session-start.mjs": loadTemplate("session-start.mjs"),
-        "pre-tool-use.mjs": loadTemplate("pre-tool-use.mjs"),
-        "post-tool-use.mjs": loadTemplate("post-tool-use.mjs"),
-        "post-tool-use-failure.mjs": loadTemplate("post-tool-use-failure.mjs"),
-        "code-simplifier.mjs": loadTemplate("code-simplifier.mjs"),
-        // Shared library modules (in lib/ subdirectory)
-        "lib/stdin.mjs": loadTemplate("lib/stdin.mjs"),
-        "lib/atomic-write.mjs": loadTemplate("lib/atomic-write.mjs"),
-    };
 }
 //# sourceMappingURL=hooks.js.map

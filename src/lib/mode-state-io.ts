@@ -6,13 +6,17 @@
  * and file permissions so that individual mode modules don't duplicate this logic.
  */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
 import {
+  getOmcRoot,
   resolveStatePath,
   resolveSessionStatePath,
   ensureSessionStateDir,
   ensureOmcDir,
+  listSessionIds,
 } from './worktree-paths.js';
+import { atomicWriteJsonSync } from './atomic-write.js';
 
 export function getStateSessionOwner(state: Record<string, unknown> | null | undefined): string | undefined {
   if (!state || typeof state !== 'object') {
@@ -58,6 +62,55 @@ function resolveFile(mode: string, directory?: string, sessionId?: string): stri
   return resolveStatePath(mode, baseDir);
 }
 
+function getLegacyStateCandidates(mode: string, directory?: string): string[] {
+  const baseDir = directory || process.cwd();
+  const normalizedName = mode.endsWith('-state') ? mode : `${mode}-state`;
+
+  return [
+    resolveStatePath(mode, baseDir),
+    join(getOmcRoot(baseDir), `${normalizedName}.json`),
+  ];
+}
+
+/**
+ * Find session-scoped state files that belong to the requested session.
+ *
+ * Normally the state file lives under `.omc/state/sessions/{sessionId}/`.
+ * When a file is stranded under a different session directory (for example
+ * after session continuation or manual recovery), this scans all session
+ * directories and returns any file whose embedded owner still matches the
+ * requested session.
+ */
+export function findSessionOwnedStateFiles(
+  mode: string,
+  sessionId: string,
+  directory?: string,
+): string[] {
+  const matches = new Set<string>();
+  const expectedPath = resolveSessionStatePath(mode, sessionId, directory);
+  if (existsSync(expectedPath)) {
+    matches.add(expectedPath);
+  }
+
+  for (const sid of listSessionIds(directory)) {
+    const candidatePath = resolveSessionStatePath(mode, sid, directory);
+    if (!existsSync(candidatePath)) {
+      continue;
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(candidatePath, 'utf-8')) as Record<string, unknown>;
+      if (getStateSessionOwner(raw) === sessionId) {
+        matches.add(candidatePath);
+      }
+    } catch {
+      // Ignore unreadable files and keep scanning.
+    }
+  }
+
+  return [...matches];
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -85,10 +138,11 @@ export function writeModeState(
       ensureOmcDir('state', baseDir);
     }
     const filePath = resolveFile(mode, directory, sessionId);
-    const envelope = { ...state, _meta: { written_at: new Date().toISOString(), mode } };
-    const tmpPath = filePath + '.tmp';
-    writeFileSync(tmpPath, JSON.stringify(envelope, null, 2), { mode: 0o600 });
-    renameSync(tmpPath, filePath);
+    const envelope = {
+      ...state,
+      _meta: { written_at: new Date().toISOString(), mode, ...(sessionId ? { sessionId } : {}) },
+    };
+    atomicWriteJsonSync(filePath, envelope);
     return true;
   } catch {
     return false;
@@ -145,20 +199,37 @@ export function clearModeStateFile(
   sessionId?: string,
 ): boolean {
   let success = true;
-  const filePath = resolveFile(mode, directory, sessionId);
+  const unlinkIfPresent = (filePath: string): void => {
+    if (!existsSync(filePath)) {
+      return;
+    }
 
-  if (existsSync(filePath)) {
     try {
       unlinkSync(filePath);
     } catch {
       success = false;
     }
+  };
+
+  if (sessionId) {
+    unlinkIfPresent(resolveFile(mode, directory, sessionId));
+  } else {
+    for (const legacyPath of getLegacyStateCandidates(mode, directory)) {
+      unlinkIfPresent(legacyPath);
+    }
+
+    for (const sid of listSessionIds(directory)) {
+      unlinkIfPresent(resolveSessionStatePath(mode, sid, directory));
+    }
   }
 
   // Ghost-legacy cleanup: if sessionId provided, also check legacy path
   if (sessionId) {
-    const legacyPath = resolveFile(mode, directory); // no sessionId = legacy
-    if (existsSync(legacyPath)) {
+    for (const legacyPath of getLegacyStateCandidates(mode, directory)) {
+      if (!existsSync(legacyPath)) {
+        continue;
+      }
+
       try {
         const content = readFileSync(legacyPath, 'utf-8');
         const legacyState = JSON.parse(content) as Record<string, unknown>;

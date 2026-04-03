@@ -91,8 +91,6 @@ async function main() {
   const devPaths = [
     join(home, "Workspace/oh-my-claudecode/dist/hud/index.js"),
     join(home, "workspace/oh-my-claudecode/dist/hud/index.js"),
-    join(home, "Workspace/oh-my-claudecode/dist/hud/index.js"),
-    join(home, "workspace/oh-my-claudecode/dist/hud/index.js"),
   ];
 
   for (const devPath of devPaths) {
@@ -113,7 +111,19 @@ async function main() {
     } catch { /* continue */ }
   }
 
-  // 4. Fallback: provide targeted repair guidance
+  // 4. npm package (global or local install)
+  const npmHudPackages = [
+    "oh-my-claude-sisyphus/dist/hud/index.js",
+    "oh-my-claudecode/dist/hud/index.js",
+  ];
+  for (const hudPackage of npmHudPackages) {
+    try {
+      await import(hudPackage);
+      return;
+    } catch { /* continue */ }
+  }
+
+  // 5. Fallback: provide targeted repair guidance
   if (pluginCacheDir && existsSync(pluginCacheDir)) {
     const distDir = join(pluginCacheDir, "dist");
     if (!existsSync(distDir)) {

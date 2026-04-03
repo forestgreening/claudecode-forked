@@ -11,6 +11,7 @@
  * - waitForDispatchReceipt: poll with exponential backoff
  */
 import { enqueueDispatchRequest, readDispatchRequest, transitionDispatchRequest, markDispatchRequestNotified, } from './dispatch-queue.js';
+import { createSwallowedErrorLogger } from '../lib/swallowed-error.js';
 // ── Internal helpers ───────────────────────────────────────────────────────
 function isConfirmedNotification(outcome) {
     if (!outcome.ok)
@@ -39,6 +40,7 @@ async function markImmediateDispatchFailure(params) {
     const { teamName, request, reason, messageId, cwd } = params;
     if (request.transport_preference === 'hook_preferred_with_fallback')
         return;
+    const logTransitionFailure = createSwallowedErrorLogger('team.mcp-comm.markImmediateDispatchFailure transitionDispatchRequest failed');
     const current = await readDispatchRequest(teamName, request.request_id, cwd);
     if (!current)
         return;
@@ -47,10 +49,11 @@ async function markImmediateDispatchFailure(params) {
     await transitionDispatchRequest(teamName, request.request_id, current.status, 'failed', {
         message_id: messageId ?? current.message_id,
         last_reason: reason,
-    }, cwd).catch(() => { });
+    }, cwd).catch(logTransitionFailure);
 }
 async function markLeaderPaneMissingDeferred(params) {
     const { teamName, request, cwd, messageId } = params;
+    const logTransitionFailure = createSwallowedErrorLogger('team.mcp-comm.markLeaderPaneMissingDeferred transitionDispatchRequest failed');
     const current = await readDispatchRequest(teamName, request.request_id, cwd);
     if (!current)
         return;
@@ -59,10 +62,9 @@ async function markLeaderPaneMissingDeferred(params) {
     await transitionDispatchRequest(teamName, request.request_id, current.status, current.status, {
         message_id: messageId ?? current.message_id,
         last_reason: 'leader_pane_missing_deferred',
-    }, cwd).catch(() => { });
+    }, cwd).catch(logTransitionFailure);
 }
 export async function queueInboxInstruction(params) {
-    await params.deps.writeWorkerInbox(params.teamName, params.workerName, params.inbox, params.cwd);
     const queued = await enqueueDispatchRequest(params.teamName, {
         kind: 'inbox',
         to_worker: params.workerName,
@@ -80,6 +82,18 @@ export async function queueInboxInstruction(params) {
             reason: 'duplicate_pending_dispatch_request',
             request_id: queued.request.request_id,
         };
+    }
+    try {
+        await params.deps.writeWorkerInbox(params.teamName, params.workerName, params.inbox, params.cwd);
+    }
+    catch (error) {
+        await markImmediateDispatchFailure({
+            teamName: params.teamName,
+            request: queued.request,
+            reason: 'inbox_write_failed',
+            cwd: params.cwd,
+        });
+        throw error;
     }
     const notifyOutcome = await Promise.resolve(params.notify({ workerName: params.workerName, workerIndex: params.workerIndex, paneId: params.paneId }, params.triggerMessage, { request: queued.request })).catch((error) => ({
         ok: false,

@@ -150,6 +150,9 @@ export function buildDefaultConfig(): PluginConfig {
       directory: ".omc/plans",
       filenameTemplate: "{{name}}.md",
     },
+    teleport: {
+      symlinkNodeModules: true,
+    },
     startupCodebaseMap: {
       enabled: true,
       maxFiles: 200,
@@ -160,6 +163,17 @@ export function buildDefaultConfig(): PluginConfig {
       smallWordLimit: 50,
       largeWordLimit: 200,
       suppressHeavyModesForSmallTasks: true,
+    },
+    promptPrerequisites: {
+      enabled: true,
+      sectionNames: {
+        memory: ["MÉMOIRE", "MEMOIRE", "MEMORY"],
+        skills: ["SKILLS"],
+        verifyFirst: ["VERIFY-FIRST", "VERIFY FIRST", "VERIFY_FIRST"],
+        context: ["CONTEXT"],
+      },
+      blockingTools: ["Edit", "MultiEdit", "Write", "Agent", "Task"],
+      executionKeywords: ["ralph", "ultrawork", "autopilot"],
     },
   };
 }
@@ -692,6 +706,17 @@ export function generateConfigSchema(): object {
           ultrathink: { type: "array", items: { type: "string" } },
         },
       },
+      teleport: {
+        type: "object",
+        description: "Teleport worktree bootstrap settings",
+        properties: {
+          symlinkNodeModules: {
+            type: "boolean",
+            default: true,
+            description: "Symlink node_modules from the parent repo when teleport-created worktrees have a matching package.json",
+          },
+        },
+      },
       routing: {
         type: "object",
         description: "Intelligent model routing configuration",
@@ -711,7 +736,7 @@ export function generateConfigSchema(): object {
             type: "boolean",
             default: false,
             description:
-              "Force all agents to inherit the parent model, bypassing OMC model routing. When true, no model parameter is passed to Task calls, so agents use the user's Claude Code model setting. Auto-enabled for non-Claude providers (CC Switch, custom ANTHROPIC_BASE_URL), AWS Bedrock, and Google Vertex AI.",
+              "Force all agents to inherit the parent model, bypassing OMC model routing. When true, no model parameter is passed to Task/Agent calls, so agents use the user's Claude Code model setting. Auto-enabled for non-Claude providers (CC Switch, custom ANTHROPIC_BASE_URL), AWS Bedrock, and Google Vertex AI.",
           },
         },
       },
