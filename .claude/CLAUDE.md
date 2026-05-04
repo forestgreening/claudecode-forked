@@ -84,10 +84,9 @@
 
 ## INCLUDED FEATURES
 
-이 프로젝트에는 oh-my-claudecode v3.8.9 + 커스텀 에이전트가 포함되어 있습니다:
+이 프로젝트에는 oh-my-claudecode v4.13.5 + 커스텀 에이전트가 포함되어 있습니다:
 
 ### 커스텀 에이전트
-- **flutter-engineer**: Flutter/Dart 모바일 개발 전문가
 - **founder**: 서비스 구상 컨설턴트
 
 ### 주요 기능
